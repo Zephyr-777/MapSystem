@@ -9,3 +9,7 @@ passlib==1.7.4
 pydantic[email]==2.5.3
 python-multipart==0.0.20
 Pillow==10.2.0
+geopandas==0.14.2
+pandas==2.2.0
+fiona==1.9.5
+shapely==2.0.2

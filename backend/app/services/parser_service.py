@@ -1,8 +1,56 @@
 from pathlib import Path
 from PIL import Image
 import re
+import geopandas as gpd
+import pandas as pd
+from typing import List, Dict, Any
 
 class ParserService:
+    @staticmethod
+    def parse_vector_file(file_path: Path, target_crs: str = "EPSG:3857") -> gpd.GeoDataFrame:
+        """
+        解析矢量文件 (Shapefile, GeoJSON) 并重投影到目标 CRS
+        """
+        try:
+            gdf = gpd.read_file(file_path)
+            if gdf.crs is None:
+                # 如果没有 CRS，默认假设为 WGS84
+                gdf.set_crs("EPSG:4326", inplace=True)
+            
+            # 统一重投影
+            if gdf.crs.to_string() != target_crs:
+                gdf = gdf.to_crs(target_crs)
+            
+            return gdf
+        except Exception as e:
+            raise ValueError(f"解析矢量文件失败: {str(e)}")
+
+    @staticmethod
+    def parse_tabular_file(file_path: Path) -> List[Dict[str, Any]]:
+        """
+        解析表格/文本文件 (.csv, .txt)
+        """
+        try:
+            suffix = file_path.suffix.lower()
+            if suffix == '.csv':
+                df = pd.read_csv(file_path)
+            elif suffix == '.txt':
+                # 尝试制表符或逗号分隔
+                try:
+                    df = pd.read_csv(file_path, sep='\t')
+                    if len(df.columns) < 2:
+                         df = pd.read_csv(file_path, sep=',')
+                except:
+                    df = pd.read_csv(file_path, sep=',')
+            else:
+                raise ValueError("不支持的文件格式")
+            
+            # 处理 NaN 值
+            df = df.where(pd.notnull(df), None)
+            return df.to_dict(orient='records')
+        except Exception as e:
+             raise ValueError(f"解析文本文件失败: {str(e)}")
+
     @staticmethod
     def parse_tfw_file(tfw_path: Path) -> dict:
         """解析 .tfw 文件"""

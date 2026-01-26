@@ -18,6 +18,12 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 # Base is now imported from app.models.base
 from app.models.base import Base
 
+# Import all models to ensure they are registered with Base.metadata
+from app.models.geo_asset import GeoAsset
+from app.models.user import User
+from app.models.geologic_feature import GeologicFeature
+from app.models.attachment import Attachment
+
 
 def init_postgis() -> None:
     """

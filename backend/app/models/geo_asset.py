@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, DateTime, Float, Boolean
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.models.base import Base
 
@@ -19,6 +20,9 @@ class GeoAsset(Base):
     
     # 新增 sub_type 字段区分多元数据
     sub_type = Column(String(50), nullable=True, comment="子类型：影像/矢量/钻孔/文档")
+    
+    # 关联附件 (一对多)
+    attachments = relationship("Attachment", back_populates="geo_asset", cascade="all, delete-orphan")
 
     # PostGIS 空间范围
     # 强制使用 SRID 4326

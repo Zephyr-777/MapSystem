@@ -9,11 +9,105 @@ import urllib.parse
 from datetime import datetime
 from geoalchemy2.elements import WKTElement
 
+from app.models.geologic_feature import GeologicFeature
 from app.models.geo_asset import GeoAsset
 from app.services.parser_service import ParserService
 from app.core.config import settings
+import json
 
 class SpatialService:
+    @staticmethod
+    def process_and_import_vector(file_path: Path, db: Session) -> int:
+        """
+        处理并导入矢量数据到 GeologicFeature 表
+        """
+        # 解析并重投影到 3857
+        gdf = ParserService.parse_vector_file(file_path, target_crs="EPSG:3857")
+        
+        count = 0
+        for _, row in gdf.iterrows():
+            # 获取几何 WKT
+            geom_wkt = row.geometry.wkt
+            
+            # 提取属性 (排除 geometry 列)
+            properties = row.drop('geometry').to_dict()
+            # 处理可能的 NaN
+            properties = {k: (v if pd.notnull(v) else None) for k, v in properties.items()}
+            
+            # 尝试获取名称
+            name = properties.get('name') or properties.get('Name') or properties.get('NAME') or f"Feature_{count}"
+            
+            # 尝试获取类型
+            feature_type = row.geometry.geom_type
+            
+            # 创建记录
+            feature = GeologicFeature(
+                name=str(name),
+                type=feature_type,
+                properties=properties,
+                geometry=WKTElement(geom_wkt, srid=3857)
+            )
+            db.add(feature)
+            count += 1
+            
+        db.commit()
+        return count
+
+    @staticmethod
+    def process_and_import_tabular(file_path: Path, db: Session) -> int:
+        """
+        处理并导入表格数据 (CSV/TXT)
+        """
+        records = ParserService.parse_tabular_file(file_path)
+        count = 0
+        
+        for record in records:
+            # 简单的文本挖掘逻辑：查找坐标列
+            # 假设列名包含 lat/lon 或 x/y
+            keys = {k.lower(): k for k in record.keys()}
+            
+            lon_key = next((k for k in keys if 'lon' in k or 'lng' in k), None)
+            lat_key = next((k for k in keys if 'lat' in k), None)
+            
+            geom = None
+            if lon_key and lat_key:
+                try:
+                    lon = float(record[keys[lon_key]])
+                    lat = float(record[keys[lat_key]])
+                    # 构造点几何 (WGS84 -> 3857)
+                    # 这里我们需要手动转换，或者让 PostGIS 做
+                    # 既然我们要求存 3857，我们最好在 Python 端转，或者构造 4326 然后 Transform
+                    # 为了简单，我们用 ST_Transform(ST_SetSRID(ST_Point(lon, lat), 4326), 3857)
+                    
+                    # 注意：SQLAlchemy 中插入 Geometry 需要 WKT 或 WKB，或者 func.ST_...
+                    # 这里我们使用 func.ST_Transform
+                    geom = func.ST_Transform(
+                        func.ST_SetSRID(func.ST_Point(lon, lat), 4326), 
+                        3857
+                    )
+                except:
+                    pass
+            
+            # 如果没有坐标，可能是纯属性表，或者需要 NLP 提取
+            # 这里如果不生成 geometry，则 geometry 字段为 null (如果允许) 或跳过
+            # GeologicFeature.geometry is nullable=False. So we skip if no geometry.
+            if geom is None:
+                continue
+                
+            name = record.get('name') or record.get('Name') or f"Record_{count}"
+            
+            feature = GeologicFeature(
+                name=str(name),
+                type="Point", # 假设是点
+                properties=record,
+                geometry=geom
+            )
+            db.add(feature)
+            count += 1
+            
+        db.commit()
+        return count
+
     @staticmethod
     def process_and_save_geo_file(tif_path: Path, storage_dir: Path, db: Session) -> GeoAsset:
         file_name = tif_path.name

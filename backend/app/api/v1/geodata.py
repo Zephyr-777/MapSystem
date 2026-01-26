@@ -48,6 +48,8 @@ async def upload_files(
 ):
     uploaded_files = []
     tif_to_process = None
+    vector_to_process = None
+    tabular_to_process = None
     
     try:
         for file in files:
@@ -60,7 +62,7 @@ async def upload_files(
                 target_dir = settings.RASTER_DIR
             elif ext in ['.shp', '.shx', '.dbf', '.geojson', '.json', '.prj']:
                 target_dir = settings.VECTOR_DIR
-            elif ext in ['.pdf', '.doc', '.docx', '.txt']:
+            elif ext in ['.pdf', '.doc', '.docx', '.txt', '.csv']:
                 target_dir = settings.DOC_DIR
                 
             file_path = target_dir / filename
@@ -73,6 +75,10 @@ async def upload_files(
             
             if ext == '.tif':
                 tif_to_process = file_path
+            elif ext in ['.shp', '.geojson']:
+                vector_to_process = file_path
+            elif ext in ['.csv', '.txt']:
+                tabular_to_process = file_path
         
         # 处理 TIF (入库)
         asset_info = {}
@@ -80,19 +86,37 @@ async def upload_files(
             try:
                 asset = SpatialService.process_and_save_geo_file(tif_to_process, settings.STORAGE_DIR, db)
                 asset_info = {"id": asset.id, "name": asset.name}
-                # 更新 sub_type
                 asset.sub_type = "影像"
                 db.commit()
             except Exception as e:
                 return JSONResponse(status_code=200, content={
-                    "message": f"上传成功但解析失败: {str(e)}", 
+                    "message": f"上传成功但解析影像失败: {str(e)}", 
                     "uploaded": uploaded_files
                 })
 
+        # 处理矢量 (入库)
+        import_count = 0
+        if vector_to_process:
+            try:
+                import_count = SpatialService.process_and_import_vector(vector_to_process, db)
+            except Exception as e:
+                print(f"矢量导入失败: {e}")
+                # 不中断，继续
+        
+        # 处理表格 (文本挖掘)
+        tabular_count = 0
+        if tabular_to_process:
+            try:
+                tabular_count = SpatialService.process_and_import_tabular(tabular_to_process, db)
+            except Exception as e:
+                print(f"表格导入失败: {e}")
+
         return JSONResponse(status_code=200, content={
-            "message": "上传成功",
+            "message": "上传处理完成",
             "files": uploaded_files,
-            "asset": asset_info
+            "asset": asset_info,
+            "vector_imported": import_count,
+            "tabular_imported": tabular_count
         })
             
     except Exception as e:
