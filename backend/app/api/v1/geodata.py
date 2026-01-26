@@ -50,6 +50,7 @@ async def upload_files(
     tif_to_process = None
     vector_to_process = None
     tabular_to_process = None
+    zip_to_process = None
     
     try:
         for file in files:
@@ -64,6 +65,8 @@ async def upload_files(
                 target_dir = settings.VECTOR_DIR
             elif ext in ['.pdf', '.doc', '.docx', '.txt', '.csv']:
                 target_dir = settings.DOC_DIR
+            elif ext in ['.zip']:
+                target_dir = settings.TEMP_DIR
                 
             file_path = target_dir / filename
             
@@ -79,8 +82,19 @@ async def upload_files(
                 vector_to_process = file_path
             elif ext in ['.csv', '.txt']:
                 tabular_to_process = file_path
+            elif ext == '.zip':
+                zip_to_process = file_path
         
-        # 处理 TIF (入库)
+        # 0. 优先处理 ZIP (解压并批量入库)
+        zip_results = {}
+        if zip_to_process:
+            try:
+                zip_results = SpatialService.process_zip_archive(zip_to_process, db)
+            except Exception as e:
+                print(f"ZIP处理失败: {e}")
+                zip_results = {"error": str(e)}
+
+        # 1. 处理 TIF (入库)
         asset_info = {}
         if tif_to_process:
             try:
@@ -89,21 +103,22 @@ async def upload_files(
                 asset.sub_type = "影像"
                 db.commit()
             except Exception as e:
-                return JSONResponse(status_code=200, content={
-                    "message": f"上传成功但解析影像失败: {str(e)}", 
-                    "uploaded": uploaded_files
-                })
+                # 如果不是 ZIP 导入，才返回错误
+                if not zip_to_process:
+                    return JSONResponse(status_code=200, content={
+                        "message": f"上传成功但解析影像失败: {str(e)}", 
+                        "uploaded": uploaded_files
+                    })
 
-        # 处理矢量 (入库)
+        # 2. 处理矢量 (入库)
         import_count = 0
         if vector_to_process:
             try:
                 import_count = SpatialService.process_and_import_vector(vector_to_process, db)
             except Exception as e:
                 print(f"矢量导入失败: {e}")
-                # 不中断，继续
         
-        # 处理表格 (文本挖掘)
+        # 3. 处理表格 (文本挖掘)
         tabular_count = 0
         if tabular_to_process:
             try:
@@ -116,7 +131,8 @@ async def upload_files(
             "files": uploaded_files,
             "asset": asset_info,
             "vector_imported": import_count,
-            "tabular_imported": tabular_count
+            "tabular_imported": tabular_count,
+            "zip_processing": zip_results
         })
             
     except Exception as e:

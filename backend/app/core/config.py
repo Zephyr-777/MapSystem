@@ -11,6 +11,7 @@ class Settings:
     RASTER_DIR: Path = STORAGE_DIR / "rasters"
     VECTOR_DIR: Path = STORAGE_DIR / "vectors"
     DOC_DIR: Path = STORAGE_DIR / "docs"
+    TEMP_DIR: Path = STORAGE_DIR / "temp"
 
     # 数据库配置
     DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/vue_map_db")
@@ -24,6 +25,7 @@ class Settings:
         self.RASTER_DIR.mkdir(parents=True, exist_ok=True)
         self.VECTOR_DIR.mkdir(parents=True, exist_ok=True)
         self.DOC_DIR.mkdir(parents=True, exist_ok=True)
+        self.TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 settings = Settings()
 settings.create_dirs()

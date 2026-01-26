@@ -109,6 +109,104 @@ class SpatialService:
         return count
 
     @staticmethod
+    def process_zip_archive(zip_path: Path, db: Session) -> dict:
+        """
+        处理 ZIP 压缩包：解压 -> 递归扫描 -> 分类处理
+        """
+        import shutil
+        import os
+        
+        extract_dir = settings.TEMP_DIR / zip_path.stem
+        if extract_dir.exists():
+            shutil.rmtree(extract_dir)
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        
+        results = {
+            "tif_imported": 0,
+            "vector_imported": 0,
+            "tabular_imported": 0,
+            "files_found": []
+        }
+        
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
+            
+            # 递归遍历解压后的目录
+            for root, dirs, files in os.walk(extract_dir):
+                for filename in files:
+                    file_path = Path(root) / filename
+                    ext = file_path.suffix.lower()
+                    
+                    # 忽略 macOS 隐藏文件
+                    if filename.startswith('._') or filename == '.DS_Store':
+                        continue
+                        
+                    results["files_found"].append(filename)
+                    
+                    # 1. 影像数据 (.tif)
+                    if ext in ['.tif', '.tiff']:
+                        # 移动到 rasters 目录
+                        target_path = settings.RASTER_DIR / filename
+                        shutil.move(str(file_path), str(target_path))
+                        # 尝试移动配套文件 (.tfw, .prj)
+                        for aux_ext in ['.tfw', '.prj', '.xml']:
+                            aux_file = file_path.with_suffix(aux_ext)
+                            if aux_file.exists():
+                                shutil.move(str(aux_file), str(settings.RASTER_DIR / aux_file.name))
+                        
+                        try:
+                            asset = SpatialService.process_and_save_geo_file(target_path, settings.STORAGE_DIR, db)
+                            asset.sub_type = "影像"
+                            db.commit()
+                            results["tif_imported"] += 1
+                        except Exception as e:
+                            print(f"ZIP内影像导入失败 {filename}: {e}")
+                            
+                    # 2. 矢量数据 (.shp, .geojson)
+                    elif ext in ['.shp', '.geojson']:
+                        # 移动到 vectors 目录
+                        target_path = settings.VECTOR_DIR / filename
+                        shutil.move(str(file_path), str(target_path))
+                        
+                        # 如果是 SHP，必须移动配套文件 (.shx, .dbf, .prj)
+                        if ext == '.shp':
+                            stem = file_path.stem
+                            for aux_file in Path(root).glob(f"{stem}.*"):
+                                if aux_file.name == filename: continue
+                                shutil.move(str(aux_file), str(settings.VECTOR_DIR / aux_file.name))
+                                
+                        try:
+                            count = SpatialService.process_and_import_vector(target_path, db)
+                            results["vector_imported"] += count
+                        except Exception as e:
+                            print(f"ZIP内矢量导入失败 {filename}: {e}")
+
+                    # 3. 表格/文档 (.csv, .txt, .doc, .pdf)
+                    elif ext in ['.csv', '.txt']:
+                        target_path = settings.DOC_DIR / filename
+                        shutil.move(str(file_path), str(target_path))
+                        try:
+                            count = SpatialService.process_and_import_tabular(target_path, db)
+                            results["tabular_imported"] += count
+                        except Exception as e:
+                            print(f"ZIP内表格导入失败 {filename}: {e}")
+                            
+                    elif ext in ['.doc', '.docx', '.pdf']:
+                        target_path = settings.DOC_DIR / filename
+                        shutil.move(str(file_path), str(target_path))
+                        # TODO: 建立 Attachment 关联
+                        
+        except zipfile.BadZipFile:
+            raise ValueError("无效的 ZIP 文件")
+        finally:
+            # 清理临时解压目录
+            if extract_dir.exists():
+                shutil.rmtree(extract_dir)
+                
+        return results
+
+    @staticmethod
     def process_and_save_geo_file(tif_path: Path, storage_dir: Path, db: Session) -> GeoAsset:
         file_name = tif_path.name
         
