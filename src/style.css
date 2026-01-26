@@ -1,0 +1,26 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+    Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+  width: 100%;
+  height: 100vh;
+}
+
+:root {
+  /* 地质科技感配色 */
+  --geo-primary: #1a73e8; /* 科技感蓝色 */
+  --geo-text-secondary: #606266; /* 沉稳灰 */
+  --geo-border: #dcdfe6; /* 极淡的灰色 */
+  --geo-warning: #e6a23c; /* 橙色 */
+  --geo-bg-glass: rgba(255, 255, 255, 0.8);
+}

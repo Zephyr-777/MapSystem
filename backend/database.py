@@ -1,0 +1,36 @@
+import os
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+from app.core.config import settings
+
+# PostgreSQL / PostGIS
+DATABASE_URL = settings.DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://")
+
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=3600,
+    echo=False,
+)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Base is now imported from app.models.base
+from app.models.base import Base
+
+
+def init_postgis() -> None:
+    """
+    确保 PostGIS 扩展已启用（需要数据库具备创建扩展权限）。
+    """
+    with engine.connect() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis;"))
+        conn.commit()
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
