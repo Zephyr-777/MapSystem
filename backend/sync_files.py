@@ -14,16 +14,14 @@ import sys
 from pathlib import Path
 from datetime import datetime
 from sqlalchemy.orm import Session
-from database import SessionLocal, engine, Base
-from models import GeoAsset
 from PIL import Image
-import os
-from dotenv import load_dotenv
+import geopandas as gpd
 
-load_dotenv()
+from app.core.database import SessionLocal, engine, Base
+from app.core.config import settings
+from app.models.geo_asset import GeoAsset
 
-# 获取 storage 目录路径
-STORAGE_DIR = Path(__file__).parent / "storage"
+STORAGE_DIR = settings.STORAGE_DIR
 
 
 def parse_tfw_file(tfw_path: Path) -> dict:
@@ -116,122 +114,128 @@ def calculate_extent(tfw_data: dict, width: int, height: int) -> dict:
     }
 
 
+def calculate_center(extent: dict) -> tuple[float, float]:
+    return (
+        (extent['min_x'] + extent['max_x']) / 2,
+        (extent['min_y'] + extent['max_y']) / 2
+    )
+
+
 def sync_geo_files(db: Session):
-    """
-    同步地质文件到数据库
-    
-    Args:
-        db: 数据库会话
-    """
     if not STORAGE_DIR.exists():
         print(f"错误：存储目录不存在: {STORAGE_DIR}")
         return
-    
-    # 扫描所有 .tif 文件
-    tif_files = list(STORAGE_DIR.glob("*.tif")) + list(STORAGE_DIR.glob("*.TIF"))
-    
-    if not tif_files:
-        print(f"未找到 .tif 文件在目录: {STORAGE_DIR}")
+
+    supported_exts = {".tif", ".tiff", ".shp"}
+    files = [
+        p for p in STORAGE_DIR.rglob("*")
+        if p.is_file() and p.suffix.lower() in supported_exts and "temp" not in p.parts
+    ]
+
+    if not files:
+        print(f"未找到可同步文件在目录: {STORAGE_DIR}")
         return
-    
-    print(f"找到 {len(tif_files)} 个 .tif 文件")
-    
+
+    print(f"找到 {len(files)} 个文件")
+
     success_count = 0
     error_count = 0
     update_count = 0
     create_count = 0
-    
-    for tif_path in tif_files:
+
+    for file_path in files:
         try:
-            file_name = tif_path.name
-            file_path = str(tif_path)
-            
-            print(f"\n处理文件: {file_name}")
-            
-            # 查找对应的 .tfw 文件
-            tfw_path = tif_path.with_suffix('.tfw') or tif_path.with_suffix('.TFW')
-            
-            if not tfw_path.exists():
-                # 尝试查找大写的 .TFW
-                tfw_path = STORAGE_DIR / f"{tif_path.stem}.TFW"
-            
-            if not tfw_path.exists():
-                print(f"  警告: 未找到对应的 .tfw 文件，跳过 {file_name}")
-                # 仍然保存文件信息，但没有 extent
-                extent_min_x = extent_min_y = extent_max_x = extent_max_y = None
-                width = height = None
-                resolution_x = resolution_y = None
+            file_name = file_path.name
+            rel_path = str(file_path.relative_to(STORAGE_DIR))
+            ext = file_path.suffix.lower()
+
+            extent_min_x = extent_min_y = extent_max_x = extent_max_y = None
+            center_x = center_y = None
+            width = height = None
+            resolution_x = resolution_y = None
+            srid = 4326
+            file_type = "栅格" if ext in [".tif", ".tiff"] else "矢量"
+            sub_type = "影像" if ext in [".tif", ".tiff"] else "矢量/SHP"
+
+            if ext in [".tif", ".tiff"]:
+                tfw_path = file_path.with_suffix(".tfw")
+                if not tfw_path.exists():
+                    tfw_path = file_path.with_suffix(".TFW")
+                if tfw_path.exists():
+                    tfw_data = parse_tfw_file(tfw_path)
+                    width, height = get_image_size(file_path)
+                    extent = calculate_extent(tfw_data, width, height)
+                    extent_min_x = extent["min_x"]
+                    extent_min_y = extent["min_y"]
+                    extent_max_x = extent["max_x"]
+                    extent_max_y = extent["max_y"]
+                    resolution_x = tfw_data["pixel_width"]
+                    resolution_y = abs(tfw_data["pixel_height"])
+                    center_x, center_y = calculate_center(extent)
             else:
-                print(f"  找到 .tfw 文件: {tfw_path.name}")
-                
-                # 解析 .tfw 文件
-                tfw_data = parse_tfw_file(tfw_path)
-                
-                # 获取图像尺寸
-                width, height = get_image_size(tif_path)
-                print(f"  图像尺寸: {width} x {height}")
-                
-                # 计算 extent
-                extent = calculate_extent(tfw_data, width, height)
-                extent_min_x = extent['min_x']
-                extent_min_y = extent['min_y']
-                extent_max_x = extent['max_x']
-                extent_max_y = extent['max_y']
-                
-                resolution_x = tfw_data['pixel_width']
-                resolution_y = abs(tfw_data['pixel_height'])
-                
-                print(f"  Extent: [{extent_min_x}, {extent_min_y}, {extent_max_x}, {extent_max_y}]")
-                print(f"  分辨率: {resolution_x} x {resolution_y}")
-            
-            # 检查数据库中是否已存在
+                gdf = gpd.read_file(file_path)
+                if gdf.crs is None:
+                    gdf.set_crs("EPSG:4326", inplace=True)
+                if gdf.crs.to_string() != "EPSG:4326":
+                    gdf = gdf.to_crs("EPSG:4326")
+                bounds = gdf.total_bounds
+                extent_min_x = float(bounds[0])
+                extent_min_y = float(bounds[1])
+                extent_max_x = float(bounds[2])
+                extent_max_y = float(bounds[3])
+                center_x = (extent_min_x + extent_max_x) / 2
+                center_y = (extent_min_y + extent_max_y) / 2
+
             existing_asset = db.query(GeoAsset).filter(GeoAsset.name == file_name).first()
-            
+
             if existing_asset:
-                # 更新现有记录
-                existing_asset.file_path = file_path
+                existing_asset.file_path = rel_path
+                existing_asset.file_type = file_type
+                existing_asset.sub_type = sub_type
                 existing_asset.extent_min_x = extent_min_x
                 existing_asset.extent_min_y = extent_min_y
                 existing_asset.extent_max_x = extent_max_x
                 existing_asset.extent_max_y = extent_max_y
+                existing_asset.center_x = center_x
+                existing_asset.center_y = center_y
                 existing_asset.width = width
                 existing_asset.height = height
                 existing_asset.resolution_x = resolution_x
                 existing_asset.resolution_y = resolution_y
+                existing_asset.srid = srid
                 existing_asset.updated_at = datetime.now()
-                
                 db.commit()
                 update_count += 1
-                print(f"  ✓ 更新数据库记录")
             else:
-                # 创建新记录
                 new_asset = GeoAsset(
                     name=file_name,
-                    file_path=file_path,
-                    file_type="栅格",
+                    file_path=rel_path,
+                    file_type=file_type,
+                    sub_type=sub_type,
                     extent_min_x=extent_min_x,
                     extent_min_y=extent_min_y,
                     extent_max_x=extent_max_x,
                     extent_max_y=extent_max_y,
+                    center_x=center_x,
+                    center_y=center_y,
                     width=width,
                     height=height,
                     resolution_x=resolution_x,
-                    resolution_y=resolution_y
+                    resolution_y=resolution_y,
+                    srid=srid
                 )
-                
                 db.add(new_asset)
                 db.commit()
                 create_count += 1
-                print(f"  ✓ 创建新数据库记录")
-            
+
             success_count += 1
-            
+
         except Exception as e:
             error_count += 1
-            print(f"  ✗ 处理失败: {str(e)}")
+            print(f"处理失败: {str(e)}")
             db.rollback()
-    
-    print(f"\n同步完成:")
+
+    print("同步完成:")
     print(f"  成功: {success_count}")
     print(f"  创建: {create_count}")
     print(f"  更新: {update_count}")

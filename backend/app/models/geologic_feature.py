@@ -2,7 +2,9 @@ from sqlalchemy import Column, Integer, String, DateTime, func, JSON
 from app.models.base import Base
 
 try:
-    from geoalchemy2 import Geometry
+    # from geoalchemy2 import Geometry
+    # 暂时强制禁用 Geometry，直到 PostGIS 安装修复
+    Geometry = None
 except ImportError:
     Geometry = None
 

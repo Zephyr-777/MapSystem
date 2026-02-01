@@ -61,12 +61,12 @@ export interface AuthResponse {
 export const authApi = {
   // 登录（使用 JSON 格式）
   login: (data: LoginRequest) => {
-    return api.post<AuthResponse>('/api/auth/login/json', data)
+    return api.post<AuthResponse>('/api/auth/login/json', data) as unknown as Promise<AuthResponse>
   },
 
   // 注册
   register: (data: RegisterRequest) => {
-    return api.post<AuthResponse>('/api/auth/register', data)
+    return api.post<AuthResponse>('/api/auth/register', data) as unknown as Promise<AuthResponse>
   },
 
   // 获取当前用户信息

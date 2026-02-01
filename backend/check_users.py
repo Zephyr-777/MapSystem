@@ -4,7 +4,8 @@
 """
 
 from sqlalchemy import create_engine, text
-from database import DATABASE_URL
+from app.core.config import settings
+from app.core.database import DATABASE_URL
 
 print("=== 检查数据库中的用户记录 ===")
 print(f"使用数据库: {DATABASE_URL}")

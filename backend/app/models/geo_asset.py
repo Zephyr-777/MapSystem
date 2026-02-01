@@ -1,10 +1,12 @@
-from sqlalchemy import Column, Integer, String, DateTime, Float, Boolean
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String, DateTime, Float, Boolean, ForeignKey
+from sqlalchemy.orm import relationship, backref
 from sqlalchemy.sql import func
 from app.models.base import Base
 
 try:
-    from geoalchemy2 import Geometry
+    # from geoalchemy2 import Geometry
+    # 暂时强制禁用 Geometry，直到 PostGIS 安装修复
+    Geometry = None
 except ImportError:
     Geometry = None
 
@@ -19,10 +21,15 @@ class GeoAsset(Base):
     file_type = Column(String(50), nullable=False, default="栅格", comment="文件类型")
     
     # 新增 sub_type 字段区分多元数据
-    sub_type = Column(String(50), nullable=True, comment="子类型：影像/矢量/钻孔/文档")
+    sub_type = Column(String(50), nullable=True, comment="子类型：影像/矢量/钻孔/文档/数据库")
     
     # 关联附件 (一对多)
     attachments = relationship("Attachment", back_populates="geo_asset", cascade="all, delete-orphan")
+
+    # 附属文件关联 (自关联)
+    is_sidecar = Column(Boolean, default=False, comment="是否为附属文件")
+    parent_id = Column(Integer, ForeignKey("geo_assets.id"), nullable=True, comment="主文件ID")
+    sidecars = relationship("GeoAsset", backref=backref("parent", remote_side=[id]), cascade="all, delete-orphan")
 
     # PostGIS 空间范围
     # 强制使用 SRID 4326
@@ -36,6 +43,8 @@ class GeoAsset(Base):
     extent_min_y = Column(Float, nullable=True)
     extent_max_x = Column(Float, nullable=True)
     extent_max_y = Column(Float, nullable=True)
+    center_x = Column(Float, nullable=True)
+    center_y = Column(Float, nullable=True)
     
     width = Column(Integer, nullable=True)
     height = Column(Integer, nullable=True)

@@ -7,14 +7,15 @@ class Settings:
     
     # 存储路径配置
     BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
-    STORAGE_DIR: Path = BASE_DIR / "storage"
+    STORAGE_DIR: Path = BASE_DIR / "app" / "storage"
     RASTER_DIR: Path = STORAGE_DIR / "rasters"
     VECTOR_DIR: Path = STORAGE_DIR / "vectors"
     DOC_DIR: Path = STORAGE_DIR / "docs"
     TEMP_DIR: Path = STORAGE_DIR / "temp"
 
     # 数据库配置
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/vue_map_db")
+    # 恢复为用户原始环境配置 (mengzh)，但使用默认的 postgres 数据库
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://mengzh@localhost:5432/postgres")
     
     # 安全配置
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-here")
