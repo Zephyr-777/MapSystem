@@ -8,15 +8,18 @@ import Cluster from 'ol/source/Cluster';
 import { Style, Icon, Text, Fill, Stroke, Circle as CircleStyle } from 'ol/style';
 import type BaseLayer from 'ol/layer/Base';
 import useMapCore from './useMapCore';
+import { ElMessage } from 'element-plus';
 
 // Constants
-const TIANDITU_TK = "74490c01777d425c8621172776c11d0b";
+const TIANDITU_TK = "ba13e30aae52239f8056f1c7421cae7c";
 const AMAP_ICON_SVG = `<svg t="1738400000000" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="4267" width="32" height="32"><path d="M512 0C305.006 0 137.448 167.558 137.448 374.552c0 197.394 280.914 563.31 374.552 649.448 93.638-86.138 374.552-452.054 374.552-649.448C886.552 167.558 718.994 0 512 0z m0 561.828c-103.448 0-187.276-83.828-187.276-187.276s83.828-187.276 187.276-187.276 187.276 83.828 187.276 187.276-83.828 187.276-187.276 187.276z" p-id="4268" fill="#409EFF"></path></svg>`;
 const AMAP_ICON_SRC = 'data:image/svg+xml;base64,' + btoa(AMAP_ICON_SVG);
 
 const layers = shallowRef<BaseLayer[]>([]);
 const activeLayerKeys = ref<string[]>([]);
 const clusterStyleCache = new Map<number, Style>();
+const tdtErrorCount = ref(0);
+const isFallbackActive = ref(false);
 
 export default function useMapLayers() {
   const { getMap } = useMapCore();
@@ -29,25 +32,61 @@ export default function useMapLayers() {
     layers.value = [];
   };
 
+  const removeLayer = (id: string) => {
+    const map = getMap();
+    const index = layers.value.findIndex(l => l.get('id') === id);
+    if (index > -1) {
+      const layer = layers.value[index];
+      if (map) {
+        map.removeLayer(layer);
+      }
+      const newLayers = [...layers.value];
+      newLayers.splice(index, 1);
+      layers.value = newLayers;
+    }
+  };
+
   const addTDTLayer = (type: 'vec' | 'img' | 'ter' | 'cva' | 'cia', token: string = TIANDITU_TK): TileLayer<XYZ> => {
+    const id = `tdt-${type}`;
+    // Check if layer already exists
+    const existingLayer = layers.value.find(l => l.get('id') === id);
+    if (existingLayer) {
+        return existingLayer as TileLayer<XYZ>;
+    }
+
     console.log(`Adding Tianditu layer: ${type}`);
     const source = new XYZ({
       url: `https://t{0-7}.tianditu.gov.cn/${type}_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${type}&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=${token}`,
       crossOrigin: "anonymous",
     });
 
-    source.on('tileloaderror', (event) => {
-      console.error(`Tianditu tile load error for ${type}:`, event);
+    source.on('tileloaderror', (_event) => {
+      // Simple error counting logic
+      if (!isFallbackActive.value) {
+          tdtErrorCount.value++;
+          if (tdtErrorCount.value > 10) {
+              console.warn('Too many Tianditu errors, switching to OSM fallback');
+              isFallbackActive.value = true;
+              ElMessage.warning('天地图加载异常，已自动切换为备用地图源');
+              
+              // Switch active layers
+              const currentKeys = activeLayerKeys.value.filter(k => !k.startsWith('tdt-'));
+              if (!currentKeys.includes('osm')) {
+                  currentKeys.push('osm');
+              }
+              activeLayerKeys.value = currentKeys;
+          }
+      }
     });
 
     const layer = new TileLayer({
       source: source,
       zIndex: type.includes('c') ? 1 : 0,
-      visible: activeLayerKeys.value.includes(`tdt-${type}`),
-      preload: 2, // 开启预加载，减少白块
+      visible: true, // Default to true, visibility controlled by add/remove or activeLayerKeys
+      preload: 2,
     });
     
-    layer.set('id', `tdt-${type}`);
+    layer.set('id', id);
     
     const map = getMap();
     if (map) {
@@ -208,6 +247,8 @@ export default function useMapLayers() {
     addEsriSatelliteLayer,
     addNavigationLayer,
     addClusterLayer,
-    clearLayers
+    removeLayer,
+    clearLayers,
+    isFallbackActive,
   };
 }

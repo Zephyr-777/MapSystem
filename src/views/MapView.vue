@@ -6,19 +6,42 @@
         <div ref="mouseTooltipRef" class="mouse-tooltip" v-show="tooltipContent">
           {{ tooltipContent }}
         </div>
+        
+        <!-- Zoom Control -->
+        <div class="map-zoom-control card-shadow">
+          <el-icon class="zoom-btn" @click="zoomIn"><Plus /></el-icon>
+          <el-slider 
+            v-model="zoomLevel" 
+            vertical 
+            :min="3" 
+            :max="18" 
+            height="100px"
+            :show-tooltip="false"
+            @input="handleZoomChange"
+          />
+          <el-icon class="zoom-btn" @click="zoomOut"><Minus /></el-icon>
+        </div>
       </MapContainer>
 
-      <div v-if="!mapReady" class="loading-overlay">
+      <div v-if="!mapReady && !initError" class="loading-overlay">
         <el-icon class="is-loading" :size="24"><Loading /></el-icon>
         <span style="margin-left: 10px">正在初始化地图...</span>
+      </div>
+
+      <div v-if="initError" class="loading-overlay error-state">
+        <el-empty description="地图加载失败" :image-size="100">
+          <template #description>
+            <p class="error-text">{{ errorMessage }}</p>
+            <el-button type="primary" :icon="RefreshRight" @click="handleRetry">重试</el-button>
+          </template>
+        </el-empty>
       </div>
 
       <Suspense>
         <template #default>
           <div v-if="mapReady">
           <SearchBox 
-            :results="searchResults" 
-            @search="handleSearch" 
+            :fetch-suggestions="handleSearchSuggestions"
             @select-result="handleSelectResult"
             @upload="showUploadDialog = true"
           />
@@ -122,7 +145,7 @@ import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { geoDataApi } from '@/api/geodata';
 import { ElMessage } from 'element-plus';
-import { MapLocation, Files, Crop, Location, Delete, SwitchButton, Loading } from '@element-plus/icons-vue';
+import { MapLocation, Files, Crop, Location, Delete, SwitchButton, Loading, Plus, Minus, RefreshRight, Warning } from '@element-plus/icons-vue';
 import type Map from 'ol/Map';
 import type { GeoDataItem, LayerConfig, SearchResult } from '@/views/map/types/map';
 import useMapCore from '@/composables/useMapCore';
@@ -143,7 +166,7 @@ const StatsPanel = defineAsyncComponent({ loader: () => import('@/views/map/comp
 
 // Composables
 const { initMap, mapReady } = useMapCore();
-const { addOSMLayer, addEsriSatelliteLayer, addNavigationLayer, addClusterLayer, activeLayerKeys, clearLayers } = useMapLayers();
+const { addOSMLayer, addEsriSatelliteLayer, addTDTLayer, addNavigationLayer, addClusterLayer, removeLayer, activeLayerKeys, clearLayers, isFallbackActive } = useMapLayers();
 const { initInteractions, toggleDragBox, isDragBoxActive, selectedExtent, clearSelection: clearInteractions, initTooltip, flyTo } = useMapInteractions();
 
 const router = useRouter();
@@ -152,6 +175,8 @@ const map = shallowRef<Map | null>(null);
 const mapContainerRef = ref<any>(null);
 
 // State
+const initError = ref(false);
+const errorMessage = ref('');
 const showLayerPanel = ref(false);
 const sidePanelVisible = ref(false);
 const showAttributeDashboard = ref(true);
@@ -189,6 +214,12 @@ const setNavigationMarker = (coord: [number, number], name?: string) => {
     name: name || '导航点'
   });
   navigationSource.addFeature(feature);
+};
+
+const handleRetry = () => {
+  initError.value = false;
+  errorMessage.value = '';
+  window.location.reload();
 };
 
 // Init Map
@@ -230,6 +261,12 @@ onMounted(async () => {
           console.log('Initializing layers...');
           addOSMLayer();
           addEsriSatelliteLayer();
+          // Initialize Tianditu layers
+          addTDTLayer('vec');
+          addTDTLayer('cva');
+          addTDTLayer('img');
+          addTDTLayer('cia');
+          
           addNavigationLayer(navigationSource);
           updateBaseMapLayers();
 
@@ -264,37 +301,121 @@ onMounted(async () => {
           console.log('MapView initialization complete');
       } catch (error: any) {
           console.error('Failed to initialize map:', error);
+          initError.value = true;
+          errorMessage.value = error.message || '初始化过程发生未知错误';
           ElMessage.error(`地图初始化失败: ${error.message || '请检查网络或配置'}`);
       }
   } else {
       console.error('Map container element not found - check if MapContainer.vue is rendering');
+      initError.value = true;
+      errorMessage.value = '无法定位地图容器元素';
       ElMessage.error('无法定位地图容器，请尝试刷新页面');
   }
 });
 
 // Methods
-const handleSearch = async (query: string) => {
+const handleSearchSuggestions = async (queryString: string, cb: (results: any[]) => void) => {
+    if (!queryString) {
+        cb([]);
+        return;
+    }
+
     try {
-        const res = await geoDataApi.search(query);
-        if (Array.isArray(res)) {
-            searchResults.value = res;
-        } else if ((res as any).data) {
-            searchResults.value = (res as any).data;
+        const [geoRes, poiRes] = await Promise.allSettled([
+            geoDataApi.search(queryString),
+            searchTiandituPOI(queryString)
+        ]);
+
+        let results: any[] = [];
+
+        // 1. Geo Data
+        if (geoRes.status === 'fulfilled') {
+             const res = geoRes.value;
+             const data = Array.isArray(res) ? res : (res as any).data || [];
+             results = results.concat(data.map((item: any) => ({
+                 ...item,
+                 type: 'asset',
+                 value: item.name 
+             })));
         }
+
+        // 2. POI Data
+        if (poiRes.status === 'fulfilled') {
+            results = results.concat(poiRes.value);
+        }
+
+        cb(results);
     } catch (e) {
         console.error(e);
+        cb([]);
     }
 };
 
-const handleSelectResult = (item: SearchResult) => {
-    currentFeature.value = item;
-    sidePanelVisible.value = true;
-    panelTitle.value = item.name;
-    isMultiSelection.value = false;
-    if (item.center_x && item.center_y) {
-        const coords = toMapCoords([item.center_x, item.center_y], item.srid);
-        flyTo(coords);
-        setNavigationMarker(coords, item.name);
+const searchTiandituPOI = async (keyword: string) => {
+    try {
+        const postStr = JSON.stringify({
+            keyWord: keyword,
+            level: "11",
+            mapBound: "-180,-90,180,90",
+            queryType: "1",
+            start: "0",
+            count: "5"
+        });
+        const url = `https://api.tianditu.gov.cn/search?postStr=${postStr}&type=query&tk=ba13e30aae52239f8056f1c7421cae7c`;
+        
+        // Use fetch to avoid axios interceptors
+        const res = await fetch(url);
+        const data = await res.json();
+        
+        if (data.pois && Array.isArray(data.pois)) {
+            return data.pois.map((poi: any) => ({
+                name: poi.name,
+                address: poi.address,
+                type: 'location',
+                location: {
+                    lon: parseFloat(poi.lonlat.split(' ')[0]),
+                    lat: parseFloat(poi.lonlat.split(' ')[1])
+                },
+                id: poi.hotPointID || `poi-${Math.random()}`
+            }));
+        }
+        return [];
+    } catch (e) {
+        console.warn('TDT Search failed', e);
+        return [];
+    }
+};
+
+const handleSelectResult = (item: any) => {
+    currentFeature.value = item; // Might need adjustment for POI
+    
+    if (item.type === 'asset') {
+        sidePanelVisible.value = true;
+        panelTitle.value = item.name;
+        isMultiSelection.value = false;
+        if (item.center_x && item.center_y) {
+            const coords = toMapCoords([item.center_x, item.center_y], item.srid);
+            flyTo(coords);
+            setNavigationMarker(coords, item.name);
+        }
+    } else if (item.type === 'location') {
+        // Handle POI selection
+        sidePanelVisible.value = true; // Show panel for POI? User said: "Auto open InfoPanel"
+        panelTitle.value = item.name;
+        currentFeature.value = {
+            id: item.id,
+            name: item.name,
+            type: 'POI',
+            uploadTime: new Date().toISOString(),
+            description: item.address,
+            // Mock other fields
+        } as GeoDataItem;
+        
+        if (item.location) {
+             const coords = fromLonLat([item.location.lon, item.location.lat]) as [number, number];
+             flyTo(coords, 15);
+             setNavigationMarker(coords, item.name);
+        }
     }
 };
 
@@ -308,15 +429,20 @@ const toggleBaseMap = () => {
 };
 
 const updateBaseMapLayers = () => {
-    const keys = [];
+    // Explicitly manage layers: destroy old ones, add new ones
     if (currentBaseMap.value === 'vector') {
-        keys.push('osm');
+        removeLayer('tdt-img');
+        removeLayer('tdt-cia');
+        addTDTLayer('vec');
+        addTDTLayer('cva');
+        activeLayerKeys.value = activeLayerKeys.value.filter(k => k !== 'tdt-img' && k !== 'tdt-cia').concat(['tdt-vec', 'tdt-cva']);
     } else if (currentBaseMap.value === 'satellite') {
-        keys.push('esri-sat');
+        removeLayer('tdt-vec');
+        removeLayer('tdt-cva');
+        addTDTLayer('img');
+        addTDTLayer('cia');
+        activeLayerKeys.value = activeLayerKeys.value.filter(k => k !== 'tdt-vec' && k !== 'tdt-cva').concat(['tdt-img', 'tdt-cia']);
     }
-    
-    const otherKeys = activeLayerKeys.value.filter(k => k !== 'osm' && k !== 'esri-sat');
-    activeLayerKeys.value = [...otherKeys, ...keys];
 };
 
 const handleLayerVisibilityChange = ({ key, visible }: { key: string, visible: boolean }) => {
@@ -430,6 +556,31 @@ const previewReport = (report: any) => {
     ElMessage.info(`预览报告: ${report.title}`);
 };
 
+const handleZoomChange = (val: number) => {
+    const mapInstance = map.value;
+    if (mapInstance) {
+        mapInstance.getView().setZoom(val);
+    }
+};
+
+const zoomIn = () => {
+    const mapInstance = map.value;
+    if (mapInstance) {
+        const view = mapInstance.getView();
+        const currentZoom = view.getZoom() || 10;
+        view.animate({ zoom: currentZoom + 1, duration: 250 });
+    }
+};
+
+const zoomOut = () => {
+    const mapInstance = map.value;
+    if (mapInstance) {
+        const view = mapInstance.getView();
+        const currentZoom = view.getZoom() || 10;
+        view.animate({ zoom: currentZoom - 1, duration: 250 });
+    }
+};
+
 onUnmounted(() => {
     if (map.value) {
         map.value.setTarget(undefined);
@@ -449,12 +600,12 @@ onUnmounted(() => {
 
 .map-view-container {
   position: absolute;
-  width: 100vw;
-  height: 100vh;
   top: 0;
   left: 0;
+  width: 100%;
+  height: 100vh;
   overflow: hidden;
-  background: #f0f2f5;
+  background-color: #f5f7fa; /* Fallback color */
 }
 
 .mouse-tooltip {
@@ -471,13 +622,25 @@ onUnmounted(() => {
 
 .loading-overlay {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  background: rgba(255, 255, 255, 0.8);
-  padding: 20px;
-  border-radius: 8px;
-  pointer-events: none;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: rgba(255, 255, 255, 0.8);
+  z-index: 2000;
+}
+
+.error-state {
+  background-color: #fff;
+  z-index: 3000;
+}
+
+.error-text {
+  color: #f56c6c;
+  margin-bottom: 15px;
 }
 
 .floating-toolbar {
@@ -496,5 +659,45 @@ onUnmounted(() => {
 
 .floating-toolbar .el-button {
   margin-left: 0 !important;
+}
+
+.map-zoom-control {
+  position: absolute;
+  bottom: 30px;
+  right: 20px;
+  background: #FFFFFF;
+  padding: 8px 4px;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 100;
+  width: 32px;
+}
+
+.card-shadow {
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+}
+
+.zoom-btn {
+  cursor: pointer;
+  color: #606266;
+  font-size: 16px;
+  transition: color 0.2s;
+}
+
+.zoom-btn:hover {
+  color: #1576FF;
+}
+
+:deep(.el-slider__bar) {
+  background-color: #1576FF;
+}
+
+:deep(.el-slider__button) {
+  border-color: #1576FF;
+  width: 14px;
+  height: 14px;
 }
 </style>

@@ -1,100 +1,82 @@
 <template>
   <div class="search-container">
-    <div class="search-bar">
+    <div class="search-bar card-shadow">
       <div class="search-logo">
         <span class="logo-text">GeoMap</span>
       </div>
       <div class="search-divider-vertical"></div>
-      <input 
-        v-model="internalQuery" 
-        class="custom-search-input" 
-        placeholder="搜索地点、地质数据..." 
-        @input="onInput"
-        @focus="onFocus"
-      />
-      <div class="search-icon-btn" @click="handleSearch">
-        <el-icon :size="18" color="#606266"><Search /></el-icon>
-      </div>
+      
+      <el-autocomplete
+        v-model="internalQuery"
+        class="custom-search-input"
+        :fetch-suggestions="querySearchAsync"
+        placeholder="搜索地点、地质数据..."
+        :trigger-on-focus="false"
+        :debounce="300"
+        @select="handleSelectResult"
+        highlight-first-item
+        popper-class="search-autocomplete-popper"
+      >
+        <template #default="{ item }">
+          <div class="autocomplete-item">
+            <div class="item-icon">
+              <el-icon v-if="item.type === 'asset'"><Document /></el-icon>
+              <el-icon v-else><Location /></el-icon>
+            </div>
+            <div class="item-content">
+              <div class="item-title" v-html="highlightText(item.name)"></div>
+              <div class="item-meta">{{ item.address || (item.type === 'asset' ? '地质数据' : '地理位置') }}</div>
+            </div>
+          </div>
+        </template>
+        <template #suffix>
+          <el-icon v-if="internalQuery" class="clear-icon" @click.stop="clearSearch"><CircleClose /></el-icon>
+          <el-icon v-else class="search-icon"><Search /></el-icon>
+        </template>
+      </el-autocomplete>
+
       <div class="search-divider-vertical"></div>
       <div class="upload-btn-icon" @click="$emit('upload')" title="上传数据">
         <el-icon :size="18" color="#409EFF"><UploadFilled /></el-icon>
       </div>
     </div>
-
-    <!-- Search Results List -->
-    <transition name="fade">
-      <div v-if="showResults && results.length > 0" class="search-results">
-        <div 
-          v-for="item in results" 
-          :key="item.id" 
-          class="result-item" 
-          @click="handleSelectResult(item)"
-        >
-          <div class="result-icon">
-            <el-icon><Location /></el-icon>
-          </div>
-          <div class="result-info">
-            <div class="result-name">{{ item.name }}</div>
-            <div class="result-meta">{{ item.type }} · {{ item.uploadTime }}</div>
-          </div>
-        </div>
-      </div>
-    </transition>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue';
-import { Search, UploadFilled, Location } from '@element-plus/icons-vue';
+import { Search, UploadFilled, Location, Document, CircleClose } from '@element-plus/icons-vue';
 import type { SearchResult } from '@/views/map/types/map';
 
 const props = defineProps<{
-  results: SearchResult[];
-  loading?: boolean;
+  fetchSuggestions: (queryString: string, cb: (results: any[]) => void) => void;
 }>();
 
 const emit = defineEmits<{
-  (e: 'search', query: string): void;
   (e: 'select-result', item: SearchResult): void;
   (e: 'upload'): void;
 }>();
 
 const internalQuery = ref('');
-const showResults = ref(false);
-let searchTimeout: any = null;
 
-const onInput = () => {
-  if (searchTimeout) clearTimeout(searchTimeout);
-  
-  if (!internalQuery.value) {
-    showResults.value = false;
-    return;
-  }
-  
-  searchTimeout = setTimeout(() => {
-    emit('search', internalQuery.value);
-    showResults.value = true;
-  }, 300);
-};
-
-const onFocus = () => {
-  if (internalQuery.value && props.results.length > 0) {
-    showResults.value = true;
-  }
-};
-
-const handleSearch = () => {
-  emit('search', internalQuery.value);
-  showResults.value = true;
+const querySearchAsync = (queryString: string, cb: (results: any[]) => void) => {
+  props.fetchSuggestions(queryString, cb);
 };
 
 const handleSelectResult = (item: SearchResult) => {
   internalQuery.value = item.name;
-  showResults.value = false;
   emit('select-result', item);
 };
 
-// Watch for external changes if needed, but simplified for now
+const clearSearch = () => {
+  internalQuery.value = '';
+};
+
+const highlightText = (text: string) => {
+  if (!internalQuery.value) return text;
+  const reg = new RegExp(`(${internalQuery.value})`, 'gi');
+  return text.replace(reg, '<span class="highlight">$1</span>');
+};
 </script>
 
 <style scoped>
@@ -103,129 +85,122 @@ const handleSelectResult = (item: SearchResult) => {
   top: 20px;
   left: 20px;
   z-index: 100;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
+  width: 380px;
 }
 
 .search-bar {
   display: flex;
   align-items: center;
   background: #fff;
-  border-radius: 4px;
+  border-radius: 8px;
   padding: 0 12px;
   height: 48px;
-  width: 360px;
-  box-sizing: border-box;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+  transition: all 0.3s;
+}
+
+.card-shadow {
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }
 
 .search-logo {
   display: flex;
   align-items: center;
-  margin-right: 4px;
+  margin-right: 12px;
 }
 
 .logo-text {
-  font-weight: 600;
-  color: #409EFF;
+  font-weight: bold;
   font-size: 16px;
-  letter-spacing: 0.5px;
+  color: #303133;
 }
 
 .search-divider-vertical {
   width: 1px;
-  height: 20px;
-  background-color: #e4e7ed;
-  margin: 0 12px;
+  height: 24px;
+  background-color: #dcdfe6;
+  margin: 0 8px;
 }
 
 .custom-search-input {
-  border: none;
-  outline: none;
   flex: 1;
-  font-size: 14px;
-  color: #606266;
-  height: 100%;
-  min-width: 0;
+  :deep(.el-input__wrapper) {
+    box-shadow: none !important;
+    padding: 0;
+    background: transparent;
+  }
+  :deep(.el-input__inner) {
+    border: none;
+    height: 48px;
+    font-size: 14px;
+  }
 }
 
-.custom-search-input::placeholder {
-  color: #c0c4cc;
-}
-
-.search-icon-btn, .upload-btn-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.upload-btn-icon {
   cursor: pointer;
   padding: 8px;
   border-radius: 4px;
-  transition: background-color 0.2s;
-  color: #606266;
-}
-
-.search-icon-btn:hover, .upload-btn-icon:hover {
-  background-color: #f5f7fa;
-  color: #409EFF;
-}
-
-.search-results {
-  width: 360px;
-  background: #fff;
-  border-radius: 4px;
-  max-height: 400px;
-  overflow-y: auto;
-  padding: 8px 0;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
-}
-
-.result-item {
+  transition: background 0.2s;
   display: flex;
-  align-items: flex-start;
-  padding: 10px 16px;
+  align-items: center;
+  justify-content: center;
+}
+
+.upload-btn-icon:hover {
+  background: #f5f7fa;
+}
+
+.clear-icon {
   cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.result-item:hover {
-  background-color: #f5f7fa;
-}
-
-.result-icon {
-  margin-right: 12px;
-  margin-top: 2px;
   color: #909399;
 }
 
-.result-info {
-  flex: 1;
-  min-width: 0;
+.clear-icon:hover {
+  color: #606266;
 }
 
-.result-name {
+.search-icon {
+  color: #909399;
+}
+</style>
+
+<style>
+/* Global styles for popper */
+.search-autocomplete-popper .autocomplete-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 4px;
+}
+
+.search-autocomplete-popper .item-icon {
+  margin-right: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #909399;
+}
+
+.search-autocomplete-popper .item-content {
+  flex: 1;
+  overflow: hidden;
+}
+
+.search-autocomplete-popper .item-title {
   font-size: 14px;
   color: #303133;
-  font-weight: 500;
-  margin-bottom: 4px;
+  line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.result-meta {
+.search-autocomplete-popper .item-meta {
   font-size: 12px;
   color: #909399;
+  margin-top: 2px;
 }
 
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+.search-autocomplete-popper .highlight {
+  color: #409EFF;
+  font-weight: bold;
 }
 </style>
