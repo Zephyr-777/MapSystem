@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.core.config import settings
+from app.api.v1.auth import get_current_user
 from app.models.geo_asset import GeoAsset
 from app.services.spatial_service import SpatialService
 from app.services.parser_service import ParserService
@@ -20,7 +21,7 @@ from app.schemas import GeoDataListResponse, GeoDataItem
 router = APIRouter()
 
 @router.get("/list", response_model=GeoDataListResponse)
-async def get_geodata_list(db: Session = Depends(get_db)):
+async def get_geodata_list(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     """获取数据列表 (仅展示主文件，隐藏附属文件)"""
     assets = db.query(GeoAsset).filter(GeoAsset.is_sidecar == False).order_by(GeoAsset.updated_at.desc()).all()
     data_list = []
@@ -54,10 +55,53 @@ async def get_geodata_list(db: Session = Depends(get_db)):
         
     return GeoDataListResponse(data=data_list, total=len(data_list))
 
+@router.get("/search", response_model=GeoDataListResponse)
+async def search_geodata(q: str, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    """搜索地质数据"""
+    if not q:
+        return GeoDataListResponse(data=[], total=0)
+    
+    query = db.query(GeoAsset).filter(GeoAsset.is_sidecar == False)
+    query = query.filter(
+        (GeoAsset.name.ilike(f"%{q}%")) | 
+        (GeoAsset.file_path.ilike(f"%{q}%"))
+    )
+    assets = query.order_by(GeoAsset.updated_at.desc()).all()
+    
+    data_list = []
+    for asset in assets:
+        full_path = settings.STORAGE_DIR / asset.file_path
+        exists = full_path.exists()
+        
+        extent = None
+        if asset.extent_min_x is not None:
+            extent = [asset.extent_min_x, asset.extent_min_y, asset.extent_max_x, asset.extent_max_y]
+            
+        center_x = asset.center_x
+        center_y = asset.center_y
+        if center_x is None and extent:
+            center_x = (extent[0] + extent[2]) / 2
+            center_y = (extent[1] + extent[3]) / 2
+            
+        data_list.append(GeoDataItem(
+            id=asset.id,
+            name=asset.name,
+            type=asset.file_type,
+            uploadTime=asset.updated_at.strftime("%Y-%m-%d %H:%M:%S") if asset.updated_at else "",
+            extent=extent,
+            srid=asset.srid,
+            exists=exists,
+            center_x=center_x,
+            center_y=center_y
+        ))
+        
+    return GeoDataListResponse(data=data_list, total=len(data_list))
+
 @router.post("/upload")
 async def upload_files(
     files: Union[List[UploadFile], UploadFile] = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
     # 统一转为列表处理
     if isinstance(files, UploadFile):

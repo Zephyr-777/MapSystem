@@ -30,8 +30,13 @@ api.interceptors.response.use(
     return response.data
   },
   (error) => {
-    if (error.response?.status === 401) {
+    const config = error.config
+    // 排除登录和注册接口，避免由于密码错误导致的 401 触发页面重载
+    const isAuthPath = config.url.includes('/api/auth/login') || config.url.includes('/api/auth/register')
+    
+    if (error.response?.status === 401 && !isAuthPath) {
       localStorage.removeItem('token')
+      localStorage.removeItem('user')
       window.location.href = '/login'
     }
     return Promise.reject(error)

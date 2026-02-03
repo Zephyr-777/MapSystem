@@ -57,10 +57,13 @@ SECRET_KEY=your-secret-key-change-this-in-production
 
 ```bash
 # 开发模式（自动重载）
+# 确保在 backend 目录下执行
 uvicorn main:app --reload --port 9988
+```
 
-# 或者使用 Python 直接运行
-python main.py
+或者使用启动脚本：
+```bash
+./start.sh
 ```
 
 服务将在 `http://localhost:9988` 启动

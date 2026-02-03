@@ -55,6 +55,13 @@ export const geoDataApi = {
     return api.get<GeoDataListResponse>('/api/geodata/list')
   },
 
+  // 搜索地质数据
+  search: (query: string) => {
+    return api.get<GeoDataListResponse>('/api/geodata/search', {
+      params: { q: query }
+    })
+  },
+
   // 下载地质数据文件
   download: async (id: number) => {
     const response = await downloadApi.get(`/api/geodata/download/${id}`, {

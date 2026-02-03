@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.v1 import geodata
+from app.api.v1 import geodata, auth
 from app.core.config import settings
 from app.models.base import Base
 from app.core.database import engine, init_postgis
@@ -18,7 +18,7 @@ app = FastAPI(
 # 配置 CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -26,8 +26,7 @@ app.add_middleware(
 )
 
 # 注册路由
-# app.include_router(auth.router, prefix="/api/auth", tags=["认证"]) # auth needs refactor too but user didn't ask explicitly, keeping commented or old one if needed. User asked to move geodata.
-# We will focus on geodata as requested.
+app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(geodata.router, prefix="/api/geodata", tags=["地质数据"])
 
 @app.get("/")

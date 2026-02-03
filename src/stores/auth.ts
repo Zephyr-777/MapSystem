@@ -33,7 +33,7 @@ export const useAuthStore = defineStore('auth', () => {
     } catch (error: any) {
       return {
         success: false,
-        message: error.response?.data?.message || '登录失败，请检查用户名和密码'
+        message: error.response?.data?.detail || error.response?.data?.message || '登录失败，请检查用户名和密码'
       }
     }
   }
@@ -53,7 +53,7 @@ export const useAuthStore = defineStore('auth', () => {
     } catch (error: any) {
       return {
         success: false,
-        message: error.response?.data?.message || '注册失败，请重试'
+        message: error.response?.data?.detail || error.response?.data?.message || '注册失败，请重试'
       }
     }
   }

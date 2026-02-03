@@ -24,3 +24,20 @@ body {
   --geo-warning: #e6a23c; /* 橙色 */
   --geo-bg-glass: rgba(255, 255, 255, 0.8);
 }
+
+/* OpenLayers DragBox 样式修复 */
+.ol-dragbox {
+  background-color: rgba(255, 255, 255, 0.4);
+  border: 2px dashed #409EFF;
+}
+
+/* 移除天地图标志可能带来的异常图标 */
+.tdt-container .tdt-control-copyright, 
+.tdt-container .tdt-control-logo {
+  display: none !important;
+}
+
+/* 修复 OpenLayers 容器 */
+.ol-viewport {
+  border-radius: inherit;
+}

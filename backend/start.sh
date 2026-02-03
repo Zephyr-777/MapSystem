@@ -28,4 +28,5 @@ fi
 
 # 启动服务
 echo "启动服务..."
-uvicorn main:app --reload --port 9988
+# 排除 venv 目录，避免 WatchFiles 监听过多文件导致崩溃
+uvicorn main:app --reload --reload-exclude "venv/*" --port 9988
