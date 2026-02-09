@@ -44,6 +44,9 @@ class GeoDataItem(BaseModel):
     exists: Optional[bool] = None  # 文件是否存在于磁盘
     center_x: Optional[float] = None
     center_y: Optional[float] = None
+    distance: Optional[float] = None  # 距离 (米)
+    description: Optional[str] = None
+    source: str = "internal"
 
     class Config:
         from_attributes = True

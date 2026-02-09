@@ -14,8 +14,92 @@ from app.models.geo_asset import GeoAsset
 from app.services.parser_service import ParserService
 from app.core.config import settings
 import json
+import pandas as pd
 
 class SpatialService:
+    @staticmethod
+    def extract_metadata(file_path: Path) -> dict:
+        """
+        提取地理空间文件元数据
+        支持 .shp (通过 geopandas) 和 .tif (通过 rasterio)
+        """
+        import geopandas as gpd
+        import rasterio
+        
+        file_path = Path(file_path)
+        if not file_path.exists():
+            return {"error": "File not found"}
+            
+        suffix = file_path.suffix.lower()
+        metadata = {}
+        
+        try:
+            if suffix == '.shp':
+                gdf = gpd.read_file(file_path)
+                
+                # CRS
+                crs_info = "Unknown"
+                if gdf.crs:
+                    crs_info = gdf.crs.to_string()
+                    
+                # Attribute table preview (first 5 rows)
+                # Drop geometry column for attribute table and convert to list of dicts
+                attributes = gdf.drop(columns='geometry', errors='ignore').head(5).to_dict(orient='records')
+                
+                # Handle non-serializable types in attributes (e.g. Timestamp)
+                safe_attributes = []
+                for record in attributes:
+                    safe_record = {}
+                    for k, v in record.items():
+                        if pd.notnull(v):
+                            if isinstance(v, (datetime, pd.Timestamp)):
+                                safe_record[k] = str(v)
+                            else:
+                                safe_record[k] = v
+                        else:
+                            safe_record[k] = None
+                    safe_attributes.append(safe_record)
+                
+                metadata = {
+                    "type": "Vector",
+                    "format": "Shapefile",
+                    "crs": crs_info,
+                    "feature_count": len(gdf),
+                    "attributes_preview": safe_attributes,
+                    "columns": list(gdf.columns.drop('geometry', errors='ignore'))
+                }
+                
+            elif suffix in ['.tif', '.tiff']:
+                with rasterio.open(file_path) as src:
+                    # CRS
+                    crs_info = "Unknown"
+                    if src.crs:
+                        crs_info = src.crs.to_string()
+                        
+                    metadata = {
+                        "type": "Raster",
+                        "format": "GeoTIFF",
+                        "crs": crs_info,
+                        "width": src.width,
+                        "height": src.height,
+                        "count": src.count, # number of bands
+                        "bounds": {
+                            "left": src.bounds.left,
+                            "bottom": src.bounds.bottom,
+                            "right": src.bounds.right,
+                            "top": src.bounds.top
+                        },
+                        "driver": src.driver,
+                        "nodata": src.nodata
+                    }
+            else:
+                metadata = {"error": f"Unsupported file format: {suffix}"}
+                
+        except Exception as e:
+            metadata = {"error": str(e)}
+            
+        return metadata
+
     @staticmethod
     def process_and_import_vector(file_path: Path, db: Session) -> int:
         """

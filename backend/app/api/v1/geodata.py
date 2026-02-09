@@ -17,8 +17,82 @@ from app.models.geo_asset import GeoAsset
 from app.services.spatial_service import SpatialService
 from app.services.parser_service import ParserService
 from app.schemas import GeoDataListResponse, GeoDataItem
+from sqlalchemy import func
+from datetime import datetime, timedelta
 
 router = APIRouter()
+
+@router.get("/stats")
+async def get_geodata_stats(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    """获取数据统计信息"""
+    # 1. 矢量 vs 栅格 比例
+    # 简单起见，按 file_type 分组
+    type_counts = db.query(
+        GeoAsset.file_type, 
+        func.count(GeoAsset.id)
+    ).filter(
+        GeoAsset.is_sidecar == False
+    ).group_by(GeoAsset.file_type).all()
+    
+    # 格式化为 ECharts pie data
+    pie_data = [{"name": t[0] or "未知", "value": t[1]} for t in type_counts]
+    
+    # 2. 最近一周上传数量
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=6)
+    
+    daily_counts = db.query(
+        func.date(GeoAsset.updated_at).label('date'),
+        func.count(GeoAsset.id)
+    ).filter(
+        GeoAsset.is_sidecar == False,
+        GeoAsset.updated_at >= start_date
+    ).group_by(
+        func.date(GeoAsset.updated_at)
+    ).all()
+    
+    # 补全日期 (即使某天没有数据也要显示 0)
+    date_map = {str(t[0]): t[1] for t in daily_counts if t[0]}
+    
+    bar_categories = []
+    bar_values = []
+    
+    for i in range(7):
+        d = start_date + timedelta(days=i)
+        d_str = d.strftime("%Y-%m-%d")
+        bar_categories.append(d.strftime("%m-%d"))
+        bar_values.append(date_map.get(d_str, 0))
+        
+    return {
+        "pie": pie_data,
+        "bar": {
+            "categories": bar_categories,
+            "values": bar_values
+        }
+    }
+
+@router.get("/detail/{id}")
+async def get_geodata_detail(id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    """获取地质数据详情及元数据"""
+    asset = db.query(GeoAsset).filter(GeoAsset.id == id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="GeoAsset not found")
+        
+    full_path = settings.STORAGE_DIR / asset.file_path
+    
+    # 提取元数据
+    metadata = SpatialService.extract_metadata(full_path)
+    
+    return {
+        "id": asset.id,
+        "name": asset.name,
+        "file_path": asset.file_path,
+        "type": asset.file_type,
+        "sub_type": asset.sub_type,
+        "srid": asset.srid,
+        "upload_time": asset.updated_at.strftime("%Y-%m-%d %H:%M:%S") if asset.updated_at else "",
+        "metadata": metadata
+    }
 
 @router.get("/list", response_model=GeoDataListResponse)
 async def get_geodata_list(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
@@ -50,50 +124,172 @@ async def get_geodata_list(db: Session = Depends(get_db), current_user = Depends
             srid=asset.srid,
             exists=exists,
             center_x=center_x,
-            center_y=center_y
+            center_y=center_y,
+            description=asset.description,
+            source="internal"
         ))
         
     return GeoDataListResponse(data=data_list, total=len(data_list))
 
 @router.get("/search", response_model=GeoDataListResponse)
-async def search_geodata(q: str, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
-    """搜索地质数据"""
-    if not q:
+async def search_geodata(
+    q: str = None, 
+    lat: float = None, 
+    lon: float = None,
+    db: Session = Depends(get_db), 
+    current_user = Depends(get_current_user)
+):
+    """搜索地质数据 (支持关键字和附近搜索)"""
+    if not q and (lat is None or lon is None):
         return GeoDataListResponse(data=[], total=0)
     
-    query = db.query(GeoAsset).filter(GeoAsset.is_sidecar == False)
-    query = query.filter(
-        (GeoAsset.name.ilike(f"%{q}%")) | 
-        (GeoAsset.file_path.ilike(f"%{q}%"))
-    )
-    assets = query.order_by(GeoAsset.updated_at.desc()).all()
+    # 基础查询
+    base_query = db.query(GeoAsset).filter(GeoAsset.is_sidecar == False)
     
-    data_list = []
-    for asset in assets:
-        full_path = settings.STORAGE_DIR / asset.file_path
-        exists = full_path.exists()
+    # 0. 检查是否为坐标格式 "lon, lat"
+    import re
+    coord_match = re.match(r'^(-?\d+(\.\d+)?),\s*(-?\d+(\.\d+)?)$', q if q else "")
+    
+    if coord_match:
+        # 坐标搜索模式
+        search_lon = float(coord_match.group(1))
+        search_lat = float(coord_match.group(3))
         
-        extent = None
-        if asset.extent_min_x is not None:
-            extent = [asset.extent_min_x, asset.extent_min_y, asset.extent_max_x, asset.extent_max_y]
+        pt_search = func.ST_SetSRID(func.ST_MakePoint(search_lon, search_lat), 4326)
+        
+        # 计算距离
+        distance_expr = func.ST_Distance(
+            func.ST_Cast(func.ST_SetSRID(func.ST_MakePoint(GeoAsset.center_x, GeoAsset.center_y), 4326), 'Geography'),
+            func.ST_Cast(pt_search, 'Geography')
+        )
+        
+        query = db.query(GeoAsset, distance_expr.label('distance')).filter(
+            GeoAsset.is_sidecar == False,
+            GeoAsset.center_x.isnot(None),
+            GeoAsset.center_y.isnot(None)
+        ).order_by(distance_expr).limit(5)
+        
+        results = query.all()
+        
+        for asset, dist in results:
+            full_path = settings.STORAGE_DIR / asset.file_path
+            exists = full_path.exists()
             
-        center_x = asset.center_x
-        center_y = asset.center_y
-        if center_x is None and extent:
-            center_x = (extent[0] + extent[2]) / 2
-            center_y = (extent[1] + extent[3]) / 2
+            extent = None
+            if asset.extent_min_x is not None:
+                extent = [asset.extent_min_x, asset.extent_min_y, asset.extent_max_x, asset.extent_max_y]
+                
+            data_list.append(GeoDataItem(
+                id=asset.id,
+                name=asset.name,
+                type=asset.file_type,
+                uploadTime=asset.updated_at.strftime("%Y-%m-%d %H:%M:%S") if asset.updated_at else "",
+                extent=extent,
+                srid=asset.srid,
+                exists=exists,
+                center_x=asset.center_x,
+                center_y=asset.center_y,
+                distance=dist,
+                description=asset.description,
+                source="internal"
+            ))
             
-        data_list.append(GeoDataItem(
-            id=asset.id,
-            name=asset.name,
-            type=asset.file_type,
-            uploadTime=asset.updated_at.strftime("%Y-%m-%d %H:%M:%S") if asset.updated_at else "",
-            extent=extent,
-            srid=asset.srid,
-            exists=exists,
-            center_x=center_x,
-            center_y=center_y
-        ))
+        return GeoDataListResponse(data=data_list, total=len(data_list))
+
+    # 如果有关键字
+    if q:
+        base_query = base_query.filter(
+            (GeoAsset.name.ilike(f"%{q}%")) | 
+            (GeoAsset.file_path.ilike(f"%{q}%")) |
+            (GeoAsset.description.ilike(f"%{q}%"))
+        )
+    
+    # 如果有坐标，计算距离 (附近搜索)
+    if lat is not None and lon is not None:
+        # 使用 PostGIS 计算距离
+        # 构造 Point(center_x, center_y) 并设置 SRID 4326
+        # 假设 center_x/y 也是 4326 (Lon/Lat)
+        pt_asset = func.ST_SetSRID(func.ST_MakePoint(GeoAsset.center_x, GeoAsset.center_y), 4326)
+        pt_view = func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326)
+        
+        # 计算距离 (转为 Geography 以获取米单位)
+        distance_expr = func.ST_Distance(
+            func.ST_Cast(pt_asset, 'Geography'),
+            func.ST_Cast(pt_view, 'Geography')
+        )
+        
+        # 修改查询以包含距离
+        # 必须过滤掉 center_x/y 为空的记录
+        query = db.query(GeoAsset, distance_expr.label('distance')).filter(
+            GeoAsset.is_sidecar == False,
+            GeoAsset.center_x.isnot(None),
+            GeoAsset.center_y.isnot(None)
+        )
+        
+        if q:
+            query = query.filter(
+                (GeoAsset.name.ilike(f"%{q}%")) | 
+                (GeoAsset.file_path.ilike(f"%{q}%")) |
+                (GeoAsset.description.ilike(f"%{q}%"))
+            )
+            
+        # 按距离排序
+        results = query.order_by(distance_expr).limit(50).all()
+        
+        for asset, dist in results:
+            full_path = settings.STORAGE_DIR / asset.file_path
+            exists = full_path.exists()
+            
+            extent = None
+            if asset.extent_min_x is not None:
+                extent = [asset.extent_min_x, asset.extent_min_y, asset.extent_max_x, asset.extent_max_y]
+                
+            data_list.append(GeoDataItem(
+                id=asset.id,
+                name=asset.name,
+                type=asset.file_type,
+                uploadTime=asset.updated_at.strftime("%Y-%m-%d %H:%M:%S") if asset.updated_at else "",
+                extent=extent,
+                srid=asset.srid,
+                exists=exists,
+                center_x=asset.center_x,
+                center_y=asset.center_y,
+                distance=dist, # 米
+                description=asset.description,
+                source="internal"
+            ))
+            
+    else:
+        # 仅关键字搜索
+        assets = base_query.order_by(GeoAsset.updated_at.desc()).all()
+        
+        for asset in assets:
+            full_path = settings.STORAGE_DIR / asset.file_path
+            exists = full_path.exists()
+            
+            extent = None
+            if asset.extent_min_x is not None:
+                extent = [asset.extent_min_x, asset.extent_min_y, asset.extent_max_x, asset.extent_max_y]
+                
+            center_x = asset.center_x
+            center_y = asset.center_y
+            if center_x is None and extent:
+                center_x = (extent[0] + extent[2]) / 2
+                center_y = (extent[1] + extent[3]) / 2
+                
+            data_list.append(GeoDataItem(
+                id=asset.id,
+                name=asset.name,
+                type=asset.file_type,
+                uploadTime=asset.updated_at.strftime("%Y-%m-%d %H:%M:%S") if asset.updated_at else "",
+                extent=extent,
+                srid=asset.srid,
+                exists=exists,
+                center_x=center_x,
+                center_y=center_y,
+                description=asset.description,
+                source="internal"
+            ))
         
     return GeoDataListResponse(data=data_list, total=len(data_list))
 
@@ -393,29 +589,46 @@ async def download_batch(request: DownloadBatchRequest, db: Session = Depends(ge
     if not assets:
         raise HTTPException(status_code=404, detail="No files found")
 
-    files_to_zip = []
-    seen = set()
+    files_to_zip: list[tuple[Path, str]] = []
+    seen: set[Path] = set()
+
+    shp_sidecars = [".dbf", ".shx", ".prj"]
+
     for asset in assets:
         abs_path = settings.STORAGE_DIR / asset.file_path
-        if not abs_path.exists():
+        if not abs_path.exists() or abs_path in seen:
             continue
-        stem = abs_path.stem
-        parent_dir = abs_path.parent
-        for f in parent_dir.iterdir():
-            if f.stem != stem:
-                continue
-            if f in seen:
-                continue
-            files_to_zip.append(f)
-            seen.add(f)
+
+        suffix = abs_path.suffix.lower()
+
+        if suffix in [".shp", ".dbf", ".shx", ".prj"]:
+            base_dir = abs_path.parent
+            stem = abs_path.stem
+
+            shp_path = base_dir / f"{stem}.shp"
+            candidates = [shp_path] + [base_dir / f"{stem}{ext}" for ext in shp_sidecars]
+
+            for p in candidates:
+                if p.exists() and p not in seen:
+                    files_to_zip.append((p, f"{asset.id}/{p.name}"))
+                    seen.add(p)
+            continue
+
+        if suffix in [".tif", ".tiff"]:
+            files_to_zip.append((abs_path, f"{asset.id}/{abs_path.name}"))
+            seen.add(abs_path)
+            continue
+
+        files_to_zip.append((abs_path, f"{asset.id}/{abs_path.name}"))
+        seen.add(abs_path)
 
     if not files_to_zip:
         raise HTTPException(status_code=404, detail="No files found")
 
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        for f in files_to_zip:
-            zip_file.write(f, f.name)
+        for f, arcname in files_to_zip:
+            zip_file.write(f, arcname)
 
     zip_buffer.seek(0)
     filename = "geodata_export.zip"

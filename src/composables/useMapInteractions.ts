@@ -1,5 +1,6 @@
 import { ref, onUnmounted } from 'vue';
 import { DragBox } from 'ol/interaction';
+import { platformModifierKeyOnly } from 'ol/events/condition';
 import Overlay from 'ol/Overlay';
 import Point from 'ol/geom/Point';
 import useMapCore from './useMapCore';
@@ -17,27 +18,27 @@ export default function useMapInteractions() {
 
   const initInteractions = (
     onFeatureSelect: (feature: any) => void,
-    onExtentSelect: (extent: [number, number, number, number], geometry: any) => void
+    onExtentSelect: (extent: [number, number, number, number], geometry: any) => void,
+    onBlankClick?: () => void
   ) => {
     const map = getMap();
     if (!map) return;
 
     // Click Interaction
     map.on('singleclick', (evt) => {
-      if (isDragBoxActive.value) return;
-
+      // Allow click if not dragging box (DragBox with modifier doesn't block click unless active)
+      
       const pixel = map.getEventPixel(evt.originalEvent);
       const hit = map.forEachFeatureAtPixel(pixel, (feature) => feature);
 
       if (hit) {
+        // ... (feature logic remains the same)
         // Check cluster
         const features = hit.get('features');
         if (features) {
             if (features.length === 1) {
                 const feature = features[0];
                 const props = feature.getProperties();
-                // Map properties to GeoDataItem if needed, or pass props
-                // Assuming props match GeoDataItem structure approximately
                 onFeatureSelect({ ...props, geometry: feature.getGeometry() });
                 
                 // Animate to feature
@@ -69,12 +70,18 @@ export default function useMapInteractions() {
                  onFeatureSelect({ ...props, geometry: hit.getGeometry() });
              }
         }
+      } else {
+        // No feature hit - blank click
+        if (onBlankClick) {
+            onBlankClick();
+        }
       }
     });
 
     // DragBox Interaction
     dragBoxInteraction = new DragBox({
         className: 'ol-dragbox',
+        condition: platformModifierKeyOnly, // Ctrl + Drag
     });
 
     dragBoxInteraction.on('boxend', () => {
@@ -85,28 +92,17 @@ export default function useMapInteractions() {
         onExtentSelect(selectedExtent.value, geometry);
     });
 
-    // Initial state: remove dragbox
-    map.removeInteraction(dragBoxInteraction);
+    map.addInteraction(dragBoxInteraction);
+    isDragBoxActive.value = true;
   };
 
   const toggleDragBox = () => {
-    const map = getMap();
-    if (!map || !dragBoxInteraction) return;
-
-    isDragBoxActive.value = !isDragBoxActive.value;
-    if (isDragBoxActive.value) {
-        map.addInteraction(dragBoxInteraction);
-    } else {
-        map.removeInteraction(dragBoxInteraction);
-    }
+    console.warn('DragBox is now always active with Ctrl key');
   };
 
   const clearSelection = () => {
     selectedExtent.value = null;
     selectedItems.value = [];
-    if (isDragBoxActive.value) {
-        toggleDragBox(); // Turn off
-    }
   };
 
   const initTooltip = (element: HTMLElement) => {
@@ -127,7 +123,6 @@ export default function useMapInteractions() {
               return;
           }
           tooltipOverlay?.setPosition(evt.coordinate);
-          // Update content via ref in component
       });
   };
 
@@ -142,8 +137,23 @@ export default function useMapInteractions() {
       }
   };
 
+  const removeInteractions = () => {
+      const map = getMap();
+      if (!map) return;
+
+      if (dragBoxInteraction) {
+          map.removeInteraction(dragBoxInteraction);
+          dragBoxInteraction = null;
+      }
+      
+      if (tooltipOverlay) {
+          map.removeOverlay(tooltipOverlay);
+          tooltipOverlay = null;
+      }
+  };
+
   onUnmounted(() => {
-      // Cleanup interactions if needed
+      removeInteractions();
   });
 
   return {
@@ -154,6 +164,7 @@ export default function useMapInteractions() {
       selectedItems,
       clearSelection,
       initTooltip,
-      flyTo
+      flyTo,
+      removeInteractions
   };
 }

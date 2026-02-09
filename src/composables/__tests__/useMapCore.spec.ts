@@ -1,12 +1,10 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import useMapCore from '../useMapCore';
 
 // Mock OpenLayers
 vi.mock('ol/Map', () => ({
   default: class MockMap {
-    constructor(options: any) {
-      // simulate constructor
-    }
+    constructor(_options: any) {}
     setTarget = vi.fn();
     addControl = vi.fn();
     addLayer = vi.fn();
@@ -24,7 +22,7 @@ vi.mock('ol/Map', () => ({
 
 vi.mock('ol/View', () => ({
   default: class MockView {
-    constructor(options: any) {}
+    constructor(_options: any) {}
   }
 }));
 
@@ -34,11 +32,6 @@ vi.mock('ol/proj', () => ({
 
 describe('useMapCore', () => {
   const { initMap, getMap, mapReady } = useMapCore();
-
-  beforeEach(() => {
-    // We cannot easily reset mapInstance state since it's outside the function and not exported.
-    // However, initMap handles re-initialization (setTarget(undefined)).
-  });
 
   it('should initialize map successfully', async () => {
     const mockElement = document.createElement('div');

@@ -1,74 +1,109 @@
 <template>
-  <div class="stats-panel">
-    <div class="dashboard-header">
-      <span class="title">属性统计看板 (选区岩性)</span>
-      <el-button 
-        size="small" 
-        :icon="Download" 
-        circle 
-        @click="exportChart" 
-        title="导出图片" 
-        :disabled="!hasData"
-      />
+  <div class="stats-panel glass-morphism">
+    <div class="panel-header">
+      <span class="title">数据概览</span>
+      <div class="actions">
+        <el-button 
+          link 
+          size="small" 
+          @click="refreshData" 
+          :loading="loading"
+          title="刷新"
+          class="refresh-btn"
+        >
+          <el-icon><Refresh /></el-icon>
+        </el-button>
+      </div>
     </div>
-    <div class="chart-wrapper">
-        <div ref="chartRef" class="chart-container"></div>
-        <div v-if="!hasData" class="no-data-overlay">
-            <el-empty description="请使用框选工具选择区域" :image-size="60" />
-        </div>
+    
+    <div class="charts-container" v-loading="loading">
+      <!-- 饼图：数据类型分布 -->
+      <div class="chart-box">
+        <div class="chart-title">数据类型分布</div>
+        <div ref="pieChartRef" class="chart-instance"></div>
+      </div>
+      
+      <!-- 柱状图：最近一周上传 -->
+      <div class="chart-box">
+        <div class="chart-title">近一周新增</div>
+        <div ref="barChartRef" class="chart-instance"></div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, computed, nextTick } from 'vue';
+import { ref, onMounted, onUnmounted, nextTick } from 'vue';
 import * as echarts from 'echarts';
-import { Download } from '@element-plus/icons-vue';
+import { Refresh } from '@element-plus/icons-vue';
+import { geoDataApi } from '@/api/geodata';
+import { ElMessage } from 'element-plus';
 
-const props = defineProps<{
-  data: Array<{ name: string; value: number }>;
-}>();
+const loading = ref(false);
+const pieChartRef = ref<HTMLDivElement | null>(null);
+const barChartRef = ref<HTMLDivElement | null>(null);
+let pieChart: echarts.ECharts | null = null;
+let barChart: echarts.ECharts | null = null;
 
-const chartRef = ref<HTMLDivElement | null>(null);
-let myChart: echarts.ECharts | null = null;
-
-const hasData = computed(() => props.data && props.data.length > 0 && props.data.some(d => d.value > 0));
-
-const initChart = () => {
-  if (!chartRef.value) return;
-  
-  myChart = echarts.init(chartRef.value);
-  
-  updateChart();
-  
-  window.addEventListener('resize', handleResize);
+const refreshData = async () => {
+  loading.value = true;
+  try {
+    const res = await geoDataApi.getStats();
+    // res.data is likely the actual data if using axios interceptor correctly, 
+    // but check if wrapper exists. Usually api.get returns the data directly if interceptor handles it.
+    // Based on geodata.ts, api.get returns typed response. 
+    // Let's assume res is the data payload { pie: [], bar: { categories: [], values: [] } }
+    
+    const data = res.data || res; // Fallback
+    
+    updatePieChart(data.pie || []);
+    updateBarChart(data.bar || { categories: [], values: [] });
+    
+  } catch (error) {
+    console.error('Failed to fetch stats:', error);
+    ElMessage.error('获取统计数据失败');
+  } finally {
+    loading.value = false;
+  }
 };
 
-const updateChart = () => {
-  if (!myChart) return;
+const initCharts = () => {
+  if (pieChartRef.value) {
+    pieChart = echarts.init(pieChartRef.value);
+  }
+  if (barChartRef.value) {
+    barChart = echarts.init(barChartRef.value);
+  }
+};
 
+const updatePieChart = (data: Array<{name: string, value: number}>) => {
+  if (!pieChart) return;
+  
   const option = {
     tooltip: {
       trigger: 'item',
       formatter: '{b}: {c} ({d}%)'
     },
     legend: {
-      orient: 'vertical',
-      left: 'left',
-      top: 'middle',
+      bottom: '0%',
+      left: 'center',
+      itemWidth: 10,
+      itemHeight: 10,
       textStyle: {
-        fontSize: 11
+        color: '#333',
+        fontSize: 10
       }
     },
+    color: ['#0071E3', '#34C759', '#FF9500', '#FF3B30', '#AF52DE', '#5856D6'],
     series: [
       {
-        name: '岩性分布',
+        name: '数据类型',
         type: 'pie',
-        radius: ['40%', '70%'],
-        center: ['60%', '50%'],
+        radius: ['45%', '70%'],
+        center: ['50%', '50%'],
         avoidLabelOverlap: false,
         itemStyle: {
-          borderRadius: 5,
+          borderRadius: 8,
           borderColor: '#fff',
           borderWidth: 2
         },
@@ -80,113 +115,201 @@ const updateChart = () => {
           label: {
             show: true,
             fontSize: 14,
-            fontWeight: 'bold'
+            fontWeight: 'bold',
+            color: '#1d1d1f'
           },
           itemStyle: {
-              shadowBlur: 10,
-              shadowOffsetX: 0,
-              shadowColor: 'rgba(0, 0, 0, 0.5)'
+            shadowBlur: 10,
+            shadowOffsetX: 0,
+            shadowColor: 'rgba(0, 0, 0, 0.2)'
           }
         },
         labelLine: {
           show: false
         },
-        data: props.data && props.data.length ? props.data : []
+        data: data
       }
     ]
   };
+  
+  pieChart.setOption(option);
+};
 
-  myChart.setOption(option);
+const updateBarChart = (data: { categories: string[], values: number[] }) => {
+  if (!barChart) return;
+  
+  const option = {
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: {
+        type: 'shadow'
+      },
+      backgroundColor: 'rgba(255, 255, 255, 0.9)',
+      borderColor: '#eee',
+      textStyle: {
+        color: '#1d1d1f'
+      }
+    },
+    grid: {
+      top: '10%',
+      left: '2%',
+      right: '4%',
+      bottom: '2%',
+      containLabel: true
+    },
+    xAxis: [
+      {
+        type: 'category',
+        data: data.categories,
+        axisTick: {
+          show: false
+        },
+        axisLabel: {
+          fontSize: 10,
+          color: '#86868b'
+        },
+        axisLine: {
+          lineStyle: {
+            color: '#e5e5ea'
+          }
+        }
+      }
+    ],
+    yAxis: [
+      {
+        type: 'value',
+        minInterval: 1,
+        splitLine: {
+          lineStyle: {
+            type: 'dashed',
+            color: '#e5e5ea'
+          }
+        },
+        axisLabel: {
+          color: '#86868b'
+        }
+      }
+    ],
+    series: [
+      {
+        name: '上传数量',
+        type: 'bar',
+        barWidth: '50%',
+        data: data.values,
+        itemStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: '#5AC8FA' },
+            { offset: 1, color: '#0071E3' }
+          ]),
+          borderRadius: [4, 4, 0, 0]
+        },
+        showBackground: true,
+        backgroundStyle: {
+          color: 'rgba(180, 180, 180, 0.1)',
+          borderRadius: [4, 4, 0, 0]
+        }
+      }
+    ]
+  };
+  
+  barChart.setOption(option);
 };
 
 const handleResize = () => {
-  myChart?.resize();
+  pieChart?.resize();
+  barChart?.resize();
 };
 
-const exportChart = () => {
-    if (!myChart) return;
-    const url = myChart.getDataURL({
-        type: 'png',
-        pixelRatio: 2,
-        backgroundColor: '#fff'
-    });
-    
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = '岩性统计.png';
-    link.click();
-};
-
-onMounted(() => {
-    nextTick(() => {
-        initChart();
-    });
+onMounted(async () => {
+  await nextTick();
+  initCharts();
+  refreshData();
+  window.addEventListener('resize', handleResize);
 });
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize);
-  myChart?.dispose();
+  pieChart?.dispose();
+  barChart?.dispose();
 });
-
-watch(() => props.data, () => {
-  updateChart();
-}, { deep: true });
-
 </script>
 
 <style scoped>
 .stats-panel {
   position: absolute;
-  bottom: 20px;
-  right: 20px;
-  width: 360px;
-  height: 240px;
-  background: #fff;
-  border-radius: 4px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
-  z-index: 100;
+  top: 80px; /* Aligned with other controls */
+  left: 20px;
+  width: 300px;
+  z-index: 99;
+  border-radius: 16px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: all 0.3s ease;
 }
 
-.dashboard-header {
-  padding: 10px 16px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+/* 玻璃质感核心类 */
+.glass-morphism {
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
+}
+
+.panel-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.03);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: rgba(245, 247, 250, 0.8);
 }
 
 .title {
+  font-size: 15px;
   font-weight: 600;
-  font-size: 14px;
-  color: #303133;
+  color: #1d1d1f;
+  letter-spacing: -0.3px;
 }
 
-.chart-wrapper {
-  flex: 1;
-  position: relative;
-  width: 100%;
-  height: 100%;
+.refresh-btn:hover {
+  color: #0071E3;
+  transform: rotate(90deg);
+  transition: all 0.3s ease;
 }
 
-.chart-container {
-  width: 100%;
-  height: 100%;
-}
-
-.no-data-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(255, 255, 255, 0.8);
+.charts-container {
+  padding: 16px 20px;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.chart-box {
+  width: 100%;
+}
+
+.chart-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #86868b;
+  margin-bottom: 12px;
+  display: flex;
   align-items: center;
-  z-index: 10;
+}
+
+.chart-title::before {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 12px;
+  background: #0071E3;
+  margin-right: 8px;
+  border-radius: 2px;
+}
+
+.chart-instance {
+  width: 100%;
+  height: 160px;
 }
 </style>

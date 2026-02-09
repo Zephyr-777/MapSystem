@@ -1,10 +1,11 @@
 import axios from 'axios'
+import { ElMessage } from 'element-plus'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9988'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:9988'
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000,
+  timeout: 15000, // 增加超时时间到 15s
   headers: {
     'Content-Type': 'application/json'
   }
@@ -31,14 +32,33 @@ api.interceptors.response.use(
   },
   (error) => {
     const config = error.config
-    // 排除登录和注册接口，避免由于密码错误导致的 401 触发页面重载
-    const isAuthPath = config.url.includes('/api/auth/login') || config.url.includes('/api/auth/register')
     
-    if (error.response?.status === 401 && !isAuthPath) {
+    // 处理网络错误 (Network Error)
+    if (!error.response) {
+      if (error.code === 'ERR_NETWORK') {
+        ElMessage.error('网络连接失败，请检查后端服务是否启动')
+      } else if (error.code === 'ECONNABORTED') {
+        ElMessage.error('请求超时，请检查网络连接')
+      } else {
+        ElMessage.error(error.message || '未知网络错误')
+      }
+      return Promise.reject(error)
+    }
+
+    // 排除登录和注册接口，避免由于密码错误导致的 401 触发页面重载
+    const isAuthPath = config.url?.includes('/api/auth/login') || config.url?.includes('/api/auth/register')
+    
+    if (error.response.status === 401 && !isAuthPath) {
       localStorage.removeItem('token')
       localStorage.removeItem('user')
-      window.location.href = '/login'
+      // 避免重复跳转
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login'
+      }
+    } else if (error.response.status >= 500) {
+      ElMessage.error('服务器内部错误，请稍后重试')
     }
+    
     return Promise.reject(error)
   }
 )

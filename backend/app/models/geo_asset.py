@@ -51,6 +51,8 @@ class GeoAsset(Base):
     resolution_x = Column(Float, nullable=True)
     resolution_y = Column(Float, nullable=True)
     
+    description = Column(String(500), nullable=True, comment="描述信息")
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

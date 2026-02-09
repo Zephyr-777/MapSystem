@@ -15,6 +15,9 @@ const TIANDITU_TK = "ba13e30aae52239f8056f1c7421cae7c";
 const AMAP_ICON_SVG = `<svg t="1738400000000" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="4267" width="32" height="32"><path d="M512 0C305.006 0 137.448 167.558 137.448 374.552c0 197.394 280.914 563.31 374.552 649.448 93.638-86.138 374.552-452.054 374.552-649.448C886.552 167.558 718.994 0 512 0z m0 561.828c-103.448 0-187.276-83.828-187.276-187.276s83.828-187.276 187.276-187.276 187.276 83.828 187.276 187.276-83.828 187.276-187.276 187.276z" p-id="4268" fill="#409EFF"></path></svg>`;
 const AMAP_ICON_SRC = 'data:image/svg+xml;base64,' + btoa(AMAP_ICON_SVG);
 
+const RED_ICON_SVG = `<svg t="1738400000000" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="4267" width="32" height="32"><path d="M512 0C305.006 0 137.448 167.558 137.448 374.552c0 197.394 280.914 563.31 374.552 649.448 93.638-86.138 374.552-452.054 374.552-649.448C886.552 167.558 718.994 0 512 0z m0 561.828c-103.448 0-187.276-83.828-187.276-187.276s83.828-187.276 187.276-187.276 187.276 83.828 187.276 187.276-83.828 187.276-187.276 187.276z" p-id="4268" fill="#F56C6C"></path></svg>`;
+const RED_ICON_SRC = 'data:image/svg+xml;base64,' + btoa(RED_ICON_SVG);
+
 const layers = shallowRef<BaseLayer[]>([]);
 const activeLayerKeys = ref<string[]>([]);
 const clusterStyleCache = new Map<number, Style>();
@@ -142,9 +145,10 @@ export default function useMapLayers() {
       updateWhileAnimating: false,
       style: (feature) => {
         const name = feature.get('name');
+        const isRed = feature.get('isRed');
         return new Style({
           image: new Icon({
-            src: AMAP_ICON_SRC,
+            src: isRed ? RED_ICON_SRC : AMAP_ICON_SRC,
             scale: 1.1,
             anchor: [0.5, 1],
           }),

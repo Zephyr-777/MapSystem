@@ -37,99 +37,117 @@
         </el-empty>
       </div>
 
-      <Suspense>
-        <template #default>
-          <div v-if="mapReady">
-          <SearchBox 
-            :fetch-suggestions="handleSearchSuggestions"
-            @select-result="handleSelectResult"
-            @upload="showUploadDialog = true"
-          />
+      <div v-if="mapReady">
+        <SearchBox 
+          :fetch-suggestions="handleSearchSuggestions"
+          @select-result="handleSelectResult"
+          @upload="showUploadDialog = true"
+        />
 
+        <Transition name="fade-slide">
           <LayerControl 
+            v-if="showLayerPanel"
             :visible="showLayerPanel"
             :layer-config="layerConfig"
             @close="showLayerPanel = false"
             @update:visibility="handleLayerVisibilityChange"
             @update:opacity="handleLayerOpacityChange"
           />
+        </Transition>
 
+        <Transition name="fade-slide">
           <InfoPanel 
+            v-if="sidePanelVisible"
             :visible="sidePanelVisible"
-            :title="panelTitle"
+            :title="sidePanelTitle"
             :feature="currentFeature"
-            :is-multi-selection="isMultiSelection"
+            :is-multi-selection="selectedItems.length > 1"
             :selected-items="selectedItems"
             @close="closeSidePanel"
             @download="handleDownload"
-            @preview="handlePreview"
-            @batch-download="executeSpatialDownload"
-            @locate-item="locateItem"
-            @preview-report="previewReport"
+            @locate="locateItem"
           />
+        </Transition>
 
+        <Transition name="fade-slide">
           <StatsPanel 
             v-if="showAttributeDashboard"
-            :data="selectedStats" 
           />
-          
-          <div class="floating-toolbar">
-             <el-tooltip :content="currentBaseMap === 'vector' ? '切换卫星影像' : '切换电子地图'" placement="left">
-                <el-button 
-                  :type="currentBaseMap === 'satellite' ? 'success' : 'default'"
-                  :icon="MapLocation" 
-                  circle 
-                  @click="toggleBaseMap" 
-                />
-             </el-tooltip>
-             <el-tooltip content="图层管理" placement="left">
-                <el-button 
-                  :type="showLayerPanel ? 'primary' : 'default'"
-                  :icon="Files" 
-                  circle 
-                  @click="showLayerPanel = !showLayerPanel" 
-                />
-             </el-tooltip>
-             <el-tooltip content="框选工具" placement="left">
-                <el-button 
-                  :type="isDragBoxActive ? 'primary' : 'default'" 
-                  :icon="Crop" 
-                  circle 
-                  @click="toggleDragBox" 
-                />
-             </el-tooltip>
-             <el-tooltip content="定位" placement="left">
-                <el-button 
-                  :loading="locating" 
-                  :icon="Location" 
-                  circle 
-                  @click="handleLocation" 
-                />
-             </el-tooltip>
-             <el-tooltip content="清除选择" placement="left">
-                <el-button 
-                  :disabled="!selectedExtent" 
-                  :icon="Delete" 
-                  circle 
-                  @click="clearSelection" 
-                />
-             </el-tooltip>
-             <el-tooltip content="退出登录" placement="left">
-                <el-button 
-                  type="danger" 
-                  plain
-                  :icon="SwitchButton" 
-                  circle 
-                  @click="handleLogout" 
-                />
-             </el-tooltip>
-          </div>
+        </Transition>
+        
+        <div class="floating-toolbar">
+           <el-tooltip :content="currentBaseMap === 'vector' ? '切换卫星影像' : '切换电子地图'" placement="left">
+              <button 
+                class="toolbar-btn"
+                :class="{ 'active': currentBaseMap === 'satellite' }"
+                @click="toggleBaseMap" 
+              >
+                <el-icon><MapLocation /></el-icon>
+              </button>
+           </el-tooltip>
+           
+           <el-tooltip content="图层管理" placement="left">
+              <button 
+                class="toolbar-btn"
+                :class="{ 'active': showLayerPanel }"
+                @click="showLayerPanel = !showLayerPanel" 
+              >
+                <el-icon><Files /></el-icon>
+              </button>
+           </el-tooltip>
+           
+           <el-tooltip content="数据统计" placement="left">
+              <button 
+                class="toolbar-btn"
+                :class="{ 'active': showAttributeDashboard }"
+                @click="showAttributeDashboard = !showAttributeDashboard" 
+              >
+                <el-icon><PieChart /></el-icon>
+              </button>
+           </el-tooltip>
+           
+           <el-tooltip content="框选工具" placement="left">
+              <button 
+                class="toolbar-btn"
+                :class="{ 'active': isDragBoxActive }"
+                @click="toggleDragBox" 
+              >
+                <el-icon><Crop /></el-icon>
+              </button>
+           </el-tooltip>
+           
+           <el-tooltip content="定位" placement="left">
+              <button 
+                class="toolbar-btn"
+                :class="{ 'loading': locating }"
+                @click="handleLocation" 
+              >
+                <el-icon :class="{ 'is-loading': locating }"><Location /></el-icon>
+              </button>
+           </el-tooltip>
+           
+           <el-tooltip content="清除选择" placement="left">
+              <button 
+                class="toolbar-btn"
+                :disabled="!selectedExtent"
+                @click="clearSelection" 
+              >
+                <el-icon><Delete /></el-icon>
+              </button>
+           </el-tooltip>
+           
+           <div class="divider"></div>
+           
+           <el-tooltip content="退出登录" placement="left">
+              <button 
+                class="toolbar-btn danger"
+                @click="handleLogout" 
+              >
+                <el-icon><SwitchButton /></el-icon>
+              </button>
+           </el-tooltip>
         </div>
-      </template>
-      <template #fallback>
-        <div class="loading-overlay">正在加载地图组件...</div>
-      </template>
-    </Suspense>
+      </div>
       
       <!-- Upload Dialog (Simplified) -->
       <el-dialog v-model="showUploadDialog" title="上传地质数据">
@@ -140,34 +158,36 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, defineAsyncComponent, shallowRef } from 'vue';
+import { ref, onMounted, onUnmounted, shallowRef, nextTick, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
-import { geoDataApi } from '@/api/geodata';
+import { geoDataApi, type GeoDataItem } from '@/api/geodata';
 import { ElMessage } from 'element-plus';
-import { MapLocation, Files, Crop, Location, Delete, SwitchButton, Loading, Plus, Minus, RefreshRight, Warning } from '@element-plus/icons-vue';
+import { MapLocation, Files, Crop, Location, Delete, SwitchButton, Loading, Plus, Minus, RefreshRight, PieChart } from '@element-plus/icons-vue';
 import type Map from 'ol/Map';
-import type { GeoDataItem, LayerConfig, SearchResult } from '@/views/map/types/map';
+import type { LayerConfig } from '@/views/map/types/map';
 import useMapCore from '@/composables/useMapCore';
 import useMapLayers from '@/composables/useMapLayers';
 import useMapInteractions from '@/composables/useMapInteractions';
 import VectorSource from 'ol/source/Vector';
 import Feature from 'ol/Feature';
 import Point from 'ol/geom/Point';
-import { fromLonLat } from 'ol/proj';
+import { fromLonLat, toLonLat } from 'ol/proj';
+import { Style, Fill, Stroke, Circle as CircleStyle } from 'ol/style';
+import VectorLayer from 'ol/layer/Vector';
 
 // Components
 import ErrorBoundary from '@/components/ErrorBoundary.vue';
 import MapContainer from '@/views/map/components/MapContainer.vue';
-const SearchBox = defineAsyncComponent({ loader: () => import('@/views/map/components/SearchBox.vue') });
-const LayerControl = defineAsyncComponent({ loader: () => import('@/views/map/components/LayerControl.vue') });
-const InfoPanel = defineAsyncComponent({ loader: () => import('@/views/map/components/InfoPanel.vue') });
-const StatsPanel = defineAsyncComponent({ loader: () => import('@/views/map/components/StatsPanel.vue') });
+import SearchBox from '@/views/map/components/SearchBox.vue';
+import LayerControl from '@/views/map/components/LayerControl.vue';
+import InfoPanel from '@/views/map/components/InfoPanel.vue';
+import StatsPanel from '@/views/map/components/StatsPanel.vue';
 
 // Composables
 const { initMap, mapReady } = useMapCore();
-const { addOSMLayer, addEsriSatelliteLayer, addTDTLayer, addNavigationLayer, addClusterLayer, removeLayer, activeLayerKeys, clearLayers, isFallbackActive } = useMapLayers();
-const { initInteractions, toggleDragBox, isDragBoxActive, selectedExtent, clearSelection: clearInteractions, initTooltip, flyTo } = useMapInteractions();
+const { addOSMLayer, addEsriSatelliteLayer, addTDTLayer, addNavigationLayer, addClusterLayer, removeLayer, activeLayerKeys, clearLayers } = useMapLayers();
+const { initInteractions, toggleDragBox, isDragBoxActive, selectedExtent, clearSelection: clearInteractions, initTooltip, flyTo, removeInteractions, selectedItems } = useMapInteractions();
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -180,19 +200,34 @@ const errorMessage = ref('');
 const showLayerPanel = ref(false);
 const sidePanelVisible = ref(false);
 const showAttributeDashboard = ref(true);
-const panelTitle = ref('详情');
-const currentFeature = ref<GeoDataItem | undefined>(undefined);
-const isMultiSelection = ref(false);
-const selectedItems = ref<GeoDataItem[]>([]);
-const searchResults = ref<SearchResult[]>([]);
+const currentFeature = ref<GeoDataItem | null>(null);
 const showUploadDialog = ref(false);
 const locating = ref(false);
 const mouseTooltipRef = ref<HTMLElement | null>(null);
 const tooltipContent = ref('');
-const selectedStats = ref<Array<{name: string, value: number}>>([]);
 const currentBaseMap = ref<'vector' | 'satellite'>('vector');
 const navigationSource = new VectorSource();
 const zoomLevel = ref(10);
+
+const sidePanelTitle = computed(() => {
+  if (selectedItems.value.length > 1) return '批量操作';
+  return currentFeature.value?.name || '详细信息';
+});
+
+// Highlight Layer
+const highlightSource = new VectorSource();
+const highlightLayer = new VectorLayer({
+  source: highlightSource,
+  zIndex: 9999, // Ensure it's on top
+  style: new Style({
+    image: new CircleStyle({
+      radius: 6,
+      fill: new Fill({ color: '#FFFF00' }), // Yellow highlight
+      stroke: new Stroke({ color: '#FF0000', width: 2 })
+    }),
+    zIndex: Infinity
+  })
+});
 
 const layerConfig = ref<LayerConfig>({
   faults: { visible: true, opacity: 80, name: '矢量断裂带' },
@@ -207,11 +242,12 @@ const toMapCoords = (coord: [number, number], srid?: number) => {
   return fromLonLat(coord) as [number, number];
 };
 
-const setNavigationMarker = (coord: [number, number], name?: string) => {
+const setNavigationMarker = (coord: [number, number], name?: string, isRed: boolean = false) => {
   navigationSource.clear();
   const feature = new Feature({
     geometry: new Point(coord),
-    name: name || '导航点'
+    name: name || '导航点',
+    isRed: isRed
   });
   navigationSource.addFeature(feature);
 };
@@ -224,6 +260,7 @@ const handleRetry = () => {
 
 // Init Map
 onMounted(async () => {
+  await nextTick();
   console.log('MapView mounted, starting initialization...');
   const container = mapContainerRef.value?.getMapElement();
   if (container) {
@@ -280,18 +317,67 @@ onMounted(async () => {
 
           // Init Interactions
           console.log('Initializing interactions...');
+          if (map.value) {
+            map.value.addLayer(highlightLayer);
+          }
+
           initInteractions(
             (featureProps) => {
+                // Feature Click Handler
+                console.log('Feature clicked:', featureProps);
                 currentFeature.value = featureProps as GeoDataItem;
                 sidePanelVisible.value = true;
-                panelTitle.value = featureProps.name || '详情';
-                isMultiSelection.value = false;
             },
             (extent) => {
-                updateSelectedStats(extent);
-                isMultiSelection.value = true;
-                sidePanelVisible.value = true;
-                panelTitle.value = '已选点位';
+                // Handle DragBox Selection
+                console.log('Box Selection Extent:', extent);
+                
+                highlightSource.clear();
+                const selected: GeoDataItem[] = [];
+                
+                // Get features from cluster source
+                const features = geoPointSource.getFeaturesInExtent(extent);
+                
+                features.forEach(feature => {
+                    const originalFeatures = feature.get('features');
+                    if (originalFeatures) {
+                        // It's a cluster, unwrap items
+                        originalFeatures.forEach((f: any) => {
+                             const props = f.getProperties();
+                             // We'll add a clone to highlight layer
+                             const clone = f.clone();
+                             // clone.setStyle(null); // Use layer style
+                             highlightSource.addFeature(clone);
+                             
+                             if (props.id && props.name) {
+                                 selected.push(props as GeoDataItem);
+                             }
+                        });
+                    } else {
+                        // Normal feature
+                         const props = feature.getProperties();
+                         const clone = feature.clone();
+                         // clone.setStyle(null);
+                         highlightSource.addFeature(clone);
+                         
+                         if (props.id && props.name) {
+                             selected.push(props as GeoDataItem);
+                         }
+                    }
+                });
+
+                if (selected.length > 0) {
+                    selectedItems.value = selected;
+                    sidePanelVisible.value = true;
+                } else {
+                    ElMessage.info('该区域内未找到点位');
+                }
+            },
+            () => {
+                // Blank Click Handler
+                currentFeature.value = null;
+                sidePanelVisible.value = false;
+                highlightSource.clear(); // Clear highlights
             }
           );
 
@@ -321,8 +407,18 @@ const handleSearchSuggestions = async (queryString: string, cb: (results: any[])
     }
 
     try {
+        let center: [number, number] | undefined;
+        if (map.value) {
+            const view = map.value.getView();
+            const centerCoords = view.getCenter();
+            if (centerCoords) {
+                const lonLat = toLonLat(centerCoords);
+                center = lonLat as [number, number];
+            }
+        }
+
         const [geoRes, poiRes] = await Promise.allSettled([
-            geoDataApi.search(queryString),
+            geoDataApi.search(queryString, center),
             searchTiandituPOI(queryString)
         ]);
 
@@ -332,22 +428,34 @@ const handleSearchSuggestions = async (queryString: string, cb: (results: any[])
         if (geoRes.status === 'fulfilled') {
              const res = geoRes.value;
              const data = Array.isArray(res) ? res : (res as any).data || [];
-             results = results.concat(data.map((item: any) => ({
-                 ...item,
-                 type: 'asset',
-                 value: item.name 
-             })));
+             if (data.length > 0) {
+                 results.push({ type: 'header', name: '地质数据', id: 'header-asset' });
+                 results = results.concat(data.map((item: any) => ({
+                     ...item,
+                     type: 'asset',
+                     value: item.name 
+                 })));
+             }
         }
 
         // 2. POI Data
         if (poiRes.status === 'fulfilled') {
-            results = results.concat(poiRes.value);
+            const pois = poiRes.value;
+            if (pois.length > 0) {
+                results.push({ type: 'header', name: '地点信息', id: 'header-location' });
+                results = results.concat(pois);
+            }
+        }
+
+        // 3. Empty State
+        if (results.length === 0) {
+            results.push({ type: 'empty', name: '未发现相关地质数据或地点', id: 'empty' });
         }
 
         cb(results);
     } catch (e) {
         console.error(e);
-        cb([]);
+        cb([{ type: 'empty', name: '搜索发生错误', id: 'error' }]);
     }
 };
 
@@ -363,7 +471,6 @@ const searchTiandituPOI = async (keyword: string) => {
         });
         const url = `https://api.tianditu.gov.cn/search?postStr=${postStr}&type=query&tk=ba13e30aae52239f8056f1c7421cae7c`;
         
-        // Use fetch to avoid axios interceptors
         const res = await fetch(url);
         const data = await res.json();
         
@@ -372,6 +479,7 @@ const searchTiandituPOI = async (keyword: string) => {
                 name: poi.name,
                 address: poi.address,
                 type: 'location',
+                value: poi.name,
                 location: {
                     lon: parseFloat(poi.lonlat.split(' ')[0]),
                     lat: parseFloat(poi.lonlat.split(' ')[1])
@@ -387,12 +495,11 @@ const searchTiandituPOI = async (keyword: string) => {
 };
 
 const handleSelectResult = (item: any) => {
-    currentFeature.value = item; // Might need adjustment for POI
-    
+    if (item.type === 'header' || item.type === 'empty') return;
+
     if (item.type === 'asset') {
+        currentFeature.value = item;
         sidePanelVisible.value = true;
-        panelTitle.value = item.name;
-        isMultiSelection.value = false;
         if (item.center_x && item.center_y) {
             const coords = toMapCoords([item.center_x, item.center_y], item.srid);
             flyTo(coords);
@@ -400,24 +507,22 @@ const handleSelectResult = (item: any) => {
         }
     } else if (item.type === 'location') {
         // Handle POI selection
-        sidePanelVisible.value = true; // Show panel for POI? User said: "Auto open InfoPanel"
-        panelTitle.value = item.name;
-        currentFeature.value = {
-            id: item.id,
-            name: item.name,
-            type: 'POI',
-            uploadTime: new Date().toISOString(),
-            description: item.address,
-            // Mock other fields
-        } as GeoDataItem;
+        sidePanelVisible.value = false; // Close info panel for POI
+        const coords = fromLonLat([item.location.lon, item.location.lat]) as [number, number];
         
-        if (item.location) {
-             const coords = fromLonLat([item.location.lon, item.location.lat]) as [number, number];
-             flyTo(coords, 15);
-             setNavigationMarker(coords, item.name);
+        if (map.value) {
+            map.value.getView().animate({
+                center: coords,
+                zoom: 10,
+                duration: 1000
+            });
         }
+        
+        setNavigationMarker(coords, item.name, true);
+        ElMessage.success(`已定位到: ${item.name}`);
     }
 };
+
 
 const toggleBaseMap = () => {
     if (currentBaseMap.value === 'vector') {
@@ -489,16 +594,6 @@ const loadGeoData = async (source: VectorSource) => {
     }
 };
 
-const updateSelectedStats = (_extent: [number, number, number, number]) => {
-    // Logic to calculate stats from layers based on extent
-    // This requires accessing layer sources.
-    // For now, mock implementation or access via useMapLayers if exposed.
-    selectedStats.value = [
-        { name: '花岗岩', value: Math.floor(Math.random() * 10) },
-        { name: '玄武岩', value: Math.floor(Math.random() * 10) }
-    ];
-};
-
 const handleLocation = () => {
     locating.value = true;
     navigator.geolocation.getCurrentPosition(
@@ -519,7 +614,6 @@ const handleLocation = () => {
 const clearSelection = () => {
     clearInteractions();
     sidePanelVisible.value = false;
-    selectedStats.value = [];
 };
 
 const handleLogout = () => {
@@ -529,11 +623,28 @@ const handleLogout = () => {
 
 const closeSidePanel = () => {
     sidePanelVisible.value = false;
-    currentFeature.value = undefined;
+    currentFeature.value = null;
 };
 
-const handleDownload = (item: GeoDataItem) => {
-    ElMessage.success(`下载: ${item.name}`);
+const downloadBlob = (blob: Blob, filename: string) => {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+};
+
+const handleDownload = async (item: GeoDataItem) => {
+    try {
+        const blob = await geoDataApi.downloadBatch([item.id]);
+        const filename = `${item.name || 'geodata'}.zip`;
+        downloadBlob(blob, filename);
+    } catch (e: any) {
+        ElMessage.error(e?.message || '下载失败');
+    }
 };
 
 const handlePreview = (item: GeoDataItem) => {
@@ -544,16 +655,8 @@ const handlePreview = (item: GeoDataItem) => {
     }
 };
 
-const executeSpatialDownload = () => {
-    ElMessage.success('批量下载中...');
-};
-
 const locateItem = (item: GeoDataItem) => {
     handlePreview(item);
-};
-
-const previewReport = (report: any) => {
-    ElMessage.info(`预览报告: ${report.title}`);
 };
 
 const handleZoomChange = (val: number) => {
@@ -585,6 +688,7 @@ onUnmounted(() => {
     if (map.value) {
         map.value.setTarget(undefined);
         clearLayers();
+        removeInteractions();
         // Clear sources to free memory
         navigationSource.clear();
     }
@@ -645,16 +749,80 @@ onUnmounted(() => {
 
 .floating-toolbar {
   position: absolute;
-  top: 20px;
+  top: 50%;
   right: 20px;
-  background: #fff;
-  padding: 8px;
-  border-radius: 4px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+  transform: translateY(-50%);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
   z-index: 100;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.toolbar-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
+  color: #1d1d1f;
+  font-size: 20px;
+}
+
+.toolbar-btn:hover {
+  transform: scale(1.1);
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+.toolbar-btn.active {
+  background: #0071E3;
+  color: white;
+  border-color: #0071E3;
+}
+
+.toolbar-btn.danger {
+  color: #FF3B30;
+}
+
+.toolbar-btn.danger:hover {
+  background: #FF3B30;
+  color: white;
+  border-color: #FF3B30;
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.divider {
+  height: 1px;
+  background: rgba(0, 0, 0, 0.1);
+  margin: 4px 10px;
+}
+
+/* Global Transitions */
+.fade-slide-enter-active,
+.fade-slide-leave-active {
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.fade-slide-enter-from,
+.fade-slide-leave-to {
+  opacity: 0;
+  transform: translateY(20px);
 }
 
 .floating-toolbar .el-button {

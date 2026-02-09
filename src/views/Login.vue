@@ -1,33 +1,34 @@
 <template>
   <div class="auth-container">
-    <div class="auth-box">
+    <div class="auth-background"></div>
+    <div class="auth-box glass-morphism">
       <div class="auth-header">
-        <h1 class="auth-title">Vue Map</h1>
-        <p class="auth-subtitle">欢迎回来</p>
+        <h1 class="auth-title">GeoMap</h1>
+        <p class="auth-subtitle">探索地质数据的无限可能</p>
       </div>
       
       <form @submit.prevent="handleLogin" class="auth-form">
         <div class="form-group">
-          <label for="username">用户名</label>
           <input
             id="username"
             v-model="formData.username"
             type="text"
-            placeholder="请输入用户名"
+            placeholder="用户名"
             required
             :disabled="loading"
+            class="apple-input"
           />
         </div>
         
         <div class="form-group">
-          <label for="password">密码</label>
           <input
             id="password"
             v-model="formData.password"
             type="password"
-            placeholder="请输入密码"
+            placeholder="密码"
             required
             :disabled="loading"
+            class="apple-input"
           />
         </div>
 
@@ -35,7 +36,7 @@
           {{ errorMessage }}
         </div>
 
-        <button type="submit" class="auth-button" :disabled="loading">
+        <button type="submit" class="apple-btn primary-btn" :disabled="loading">
           <span v-if="!loading">登录</span>
           <span v-else>登录中...</span>
         </button>
@@ -46,6 +47,9 @@
           还没有账户？
           <router-link to="/register" class="auth-link">立即注册</router-link>
         </p>
+        <div class="chatgpt-hint">
+          Protected by GeoMap Secure Auth
+        </div>
       </div>
     </div>
   </div>
@@ -92,42 +96,66 @@ const handleLogin = async () => {
 
 <style scoped>
 .auth-container {
+  position: relative;
   display: flex;
   justify-content: center;
   align-items: center;
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  padding: 20px;
+  overflow: hidden;
+}
+
+/* 动态渐变背景 */
+.auth-background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(120deg, #a1c4fd 0%, #c2e9fb 100%);
+  filter: blur(8px);
+  z-index: -1;
+  background-size: 200% 200%;
+  animation: gradientBG 15s ease infinite;
+}
+
+@keyframes gradientBG {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
 
 .auth-box {
-  background: white;
-  padding: 48px;
-  border-radius: 16px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
   width: 100%;
-  max-width: 440px;
+  max-width: 400px;
+  padding: 40px;
+  border-radius: 24px;
+  text-align: center;
+}
+
+/* 玻璃质感核心类 */
+.glass-morphism {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
 }
 
 .auth-header {
-  text-align: center;
-  margin-bottom: 32px;
+  margin-bottom: 30px;
 }
 
 .auth-title {
-  font-size: 36px;
+  font-size: 28px;
   font-weight: 700;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: #1d1d1f;
   margin-bottom: 8px;
+  letter-spacing: -0.5px;
 }
 
 .auth-subtitle {
-  font-size: 16px;
-  color: #64748b;
-  font-weight: 400;
+  color: #86868b;
+  font-size: 15px;
 }
 
 .auth-form {
@@ -139,89 +167,91 @@ const handleLogin = async () => {
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  text-align: left;
 }
 
-.form-group label {
-  font-size: 14px;
-  font-weight: 500;
-  color: #334155;
-}
-
-.form-group input {
-  padding: 12px 16px;
-  border: 2px solid #e2e8f0;
-  border-radius: 8px;
-  font-size: 15px;
-  transition: all 0.3s;
-  background: #f8fafc;
-}
-
-.form-group input:focus {
+/* Apple 风格输入框 */
+.apple-input {
+  width: 100%;
+  padding: 16px;
+  border-radius: 12px;
+  border: none;
+  background: rgba(0, 0, 0, 0.05);
+  font-size: 16px;
+  color: #1d1d1f;
+  transition: all 0.3s ease;
   outline: none;
-  border-color: #667eea;
-  background: white;
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
 }
 
-.form-group input:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.apple-input:focus {
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.15);
+}
+
+.apple-input::placeholder {
+  color: #86868b;
 }
 
 .error-message {
-  padding: 12px;
-  background: #fee2e2;
-  border: 1px solid #fecaca;
-  border-radius: 8px;
-  color: #dc2626;
+  color: #ff3b30;
   font-size: 14px;
-  text-align: center;
+  background: rgba(255, 59, 48, 0.1);
+  padding: 10px;
+  border-radius: 8px;
 }
 
-.auth-button {
-  padding: 14px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+/* Apple 风格按钮 */
+.apple-btn {
+  width: 100%;
+  padding: 16px;
+  border-radius: 12px;
   border: none;
-  border-radius: 8px;
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.3s;
-  margin-top: 8px;
+  transition: all 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
-.auth-button:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+.primary-btn {
+  background: #0071E3;
+  color: white;
 }
 
-.auth-button:active:not(:disabled) {
-  transform: translateY(0);
+.primary-btn:hover {
+  background: #0077ED;
+  box-shadow: 0 4px 12px rgba(0, 113, 227, 0.3);
 }
 
-.auth-button:disabled {
-  opacity: 0.6;
+.primary-btn:active {
+  transform: scale(0.96);
+}
+
+.primary-btn:disabled {
+  background: #99c7ff;
   cursor: not-allowed;
+  transform: none;
 }
 
 .auth-footer {
   margin-top: 24px;
-  text-align: center;
   font-size: 14px;
-  color: #64748b;
+  color: #86868b;
 }
 
 .auth-link {
-  color: #667eea;
+  color: #0071E3;
   text-decoration: none;
   font-weight: 500;
-  transition: color 0.2s;
 }
 
 .auth-link:hover {
-  color: #764ba2;
   text-decoration: underline;
+}
+
+.chatgpt-hint {
+  margin-top: 40px;
+  font-size: 12px;
+  color: #86868b;
+  opacity: 0.6;
 }
 </style>

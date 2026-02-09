@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9988'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:9988'
 
 // 创建独立的 axios 实例用于文件下载
 const downloadApi = axios.create({
@@ -31,9 +31,17 @@ import api from './auth'
 export interface GeoDataItem {
   id: number
   name: string
-  type: string
+  type?: string
+  sub_type?: string
+  file_path?: string
   uploadTime: string
   extent?: [number, number, number, number]
+  srid?: number
+  center_x?: number
+  center_y?: number
+  lithology?: string
+  description?: string
+  reports?: Array<{ title: string; url: string }>
 }
 
 export interface GeoDataListResponse {
@@ -56,10 +64,20 @@ export const geoDataApi = {
   },
 
   // 搜索地质数据
-  search: (query: string) => {
+  search: (query: string, center?: [number, number]) => {
+    const params: any = { q: query }
+    if (center) {
+      params.lon = center[0]
+      params.lat = center[1]
+    }
     return api.get<GeoDataListResponse>('/api/geodata/search', {
-      params: { q: query }
+      params
     })
+  },
+
+  // 获取地质数据详情
+  getDetail: (id: number) => {
+    return api.get<any>(`/api/geodata/detail/${id}`)
   },
 
   // 下载地质数据文件
@@ -68,6 +86,20 @@ export const geoDataApi = {
       responseType: 'blob'
     })
     return response.data // 直接返回 blob 数据
+  },
+
+  downloadBatch: async (ids: number[]) => {
+    const response = await downloadApi.post(
+      '/api/geodata/download-batch',
+      { ids },
+      { responseType: 'blob' }
+    )
+    return response.data
+  },
+
+  // 获取统计数据
+  getStats: () => {
+    return api.get<any>('/api/geodata/stats')
   },
 
   // 上传地质数据文件

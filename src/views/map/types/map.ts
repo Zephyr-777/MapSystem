@@ -1,12 +1,13 @@
 export interface GeoDataItem {
   id: number;
   name: string;
-  type: string;
+  type?: string;
   uploadTime: string;
   extent?: [number, number, number, number]; // [minX, minY, maxX, maxY]
   srid?: number; // EPSG code (e.g., 3857 or 4326)
   center_x?: number;
   center_y?: number;
+  distance?: number;
   lithology?: string;
   description?: string;
   reports?: Array<{ title: string; url: string }>;
