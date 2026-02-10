@@ -51,16 +51,21 @@ export interface GeoDataListResponse {
 
 export interface UploadResponse {
   message: string
-  uploaded_files: string[]
-  asset_id?: number
-  asset_name?: string
-  warning?: string
+  processed: Array<{
+    id?: number
+    name: string
+    type: string
+    rows?: number
+    details?: any
+  }>
+  errors: string[]
+  zip_results?: Record<string, any>
 }
 
 export const geoDataApi = {
   // 获取地质数据列表
   getList: () => {
-    return api.get<GeoDataListResponse>('/api/geodata/list')
+    return api.get<GeoDataListResponse>('/api/geodata/list') as unknown as Promise<GeoDataListResponse>
   },
 
   // 搜索地质数据
@@ -72,12 +77,19 @@ export const geoDataApi = {
     }
     return api.get<GeoDataListResponse>('/api/geodata/search', {
       params
-    })
+    }) as unknown as Promise<GeoDataListResponse>
+  },
+
+  // 空间属性识别
+  identify: (lon: number, lat: number, buffer: number = 100) => {
+    return api.get<GeoDataListResponse>('/api/geodata/identify', {
+      params: { lon, lat, buffer }
+    }) as unknown as Promise<GeoDataListResponse>
   },
 
   // 获取地质数据详情
   getDetail: (id: number) => {
-    return api.get<any>(`/api/geodata/detail/${id}`)
+    return api.get<any>(`/api/geodata/detail/${id}`) as unknown as Promise<any>
   },
 
   // 下载地质数据文件
@@ -99,7 +111,7 @@ export const geoDataApi = {
 
   // 获取统计数据
   getStats: () => {
-    return api.get<any>('/api/geodata/stats')
+    return api.get<any>('/api/geodata/stats') as unknown as Promise<any>
   },
 
   // 上传地质数据文件
@@ -114,6 +126,6 @@ export const geoDataApi = {
         'Content-Type': 'multipart/form-data'
       }
     })
-    return response
+    return response as unknown as UploadResponse
   }
 }

@@ -7,6 +7,36 @@
           {{ tooltipContent }}
         </div>
         
+        <!-- Result Popover Overlay -->
+        <div ref="popupRef" class="map-popup-overlay">
+          <div v-if="popupInfo" class="popup-content glass-panel">
+            <div class="popup-header">
+              <span class="popup-title">{{ popupInfo.name }}</span>
+              <el-button link class="close-btn" @click="closePopup">
+                <el-icon><Close /></el-icon>
+              </el-button>
+            </div>
+            <div class="popup-body">
+              <div v-if="popupInfo.address" class="popup-address">
+                <el-icon><LocationInformation /></el-icon>
+                {{ popupInfo.address }}
+              </div>
+              <div class="popup-actions">
+                <el-button type="primary" size="small" round @click="handleSetCenter(popupInfo)">
+                  设为中心
+                </el-button>
+                <el-button size="small" round @click="handleDetail(popupInfo)">
+                  查看详情
+                </el-button>
+              </div>
+            </div>
+            <!-- Ripple Effect -->
+            <div class="ripple-container">
+               <div class="ripple"></div>
+            </div>
+          </div>
+        </div>
+
         <!-- Zoom Control -->
         <div class="map-zoom-control card-shadow">
           <el-icon class="zoom-btn" @click="zoomIn"><Plus /></el-icon>
@@ -149,10 +179,11 @@
         </div>
       </div>
       
-      <!-- Upload Dialog (Simplified) -->
-      <el-dialog v-model="showUploadDialog" title="上传地质数据">
-         <span>上传功能开发中...</span>
-      </el-dialog>
+      <!-- Upload Dialog -->
+      <UploadDialog 
+         v-model="showUploadDialog" 
+         @upload-success="handleUploadSuccess"
+      />
     </ErrorBoundary>
   </div>
 </template>
@@ -163,7 +194,7 @@ import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { geoDataApi, type GeoDataItem } from '@/api/geodata';
 import { ElMessage } from 'element-plus';
-import { MapLocation, Files, Crop, Location, Delete, SwitchButton, Loading, Plus, Minus, RefreshRight, PieChart } from '@element-plus/icons-vue';
+import { MapLocation, Files, Crop, Location, Delete, SwitchButton, Loading, Plus, Minus, RefreshRight, PieChart, Close, LocationInformation } from '@element-plus/icons-vue';
 import type Map from 'ol/Map';
 import type { LayerConfig } from '@/views/map/types/map';
 import useMapCore from '@/composables/useMapCore';
@@ -175,6 +206,7 @@ import Point from 'ol/geom/Point';
 import { fromLonLat, toLonLat } from 'ol/proj';
 import { Style, Fill, Stroke, Circle as CircleStyle } from 'ol/style';
 import VectorLayer from 'ol/layer/Vector';
+import Overlay from 'ol/Overlay';
 
 // Components
 import ErrorBoundary from '@/components/ErrorBoundary.vue';
@@ -183,6 +215,7 @@ import SearchBox from '@/views/map/components/SearchBox.vue';
 import LayerControl from '@/views/map/components/LayerControl.vue';
 import InfoPanel from '@/views/map/components/InfoPanel.vue';
 import StatsPanel from '@/views/map/components/StatsPanel.vue';
+import UploadDialog from '@/views/map/components/UploadDialog.vue';
 
 // Composables
 const { initMap, mapReady } = useMapCore();
@@ -204,10 +237,40 @@ const currentFeature = ref<GeoDataItem | null>(null);
 const showUploadDialog = ref(false);
 const locating = ref(false);
 const mouseTooltipRef = ref<HTMLElement | null>(null);
+const popupRef = ref<HTMLElement | null>(null);
 const tooltipContent = ref('');
 const currentBaseMap = ref<'vector' | 'satellite'>('vector');
 const navigationSource = new VectorSource();
+const geoPointSource = new VectorSource();
 const zoomLevel = ref(10);
+const popupInfo = ref<any>(null);
+let popupOverlay: Overlay | null = null;
+
+const closePopup = () => {
+  popupInfo.value = null;
+  if (popupOverlay) {
+    popupOverlay.setPosition(undefined);
+  }
+};
+
+const handleSetCenter = (info: any) => {
+  if (info.location) {
+    const coords = fromLonLat([info.location.lon, info.location.lat]) as [number, number];
+    if (map.value) {
+      map.value.getView().animate({
+        center: coords,
+        zoom: 14,
+        duration: 1000
+      });
+    }
+  }
+  closePopup();
+};
+
+const handleDetail = (info: any) => {
+  // Mock detail or simple info
+  ElMessage.info(`查看详情: ${info.name}`);
+};
 
 const sidePanelTitle = computed(() => {
   if (selectedItems.value.length > 1) return '批量操作';
@@ -257,6 +320,20 @@ const handleRetry = () => {
   errorMessage.value = '';
   window.location.reload();
 };
+
+const handleUploadSuccess = async (asset: any) => {
+    // Reload data
+    await loadGeoData(geoPointSource);
+    
+    // Fly to
+    if (asset.center_x && asset.center_y) {
+        const coords = toMapCoords([asset.center_x, asset.center_y], asset.srid || 4326);
+        flyTo(coords);
+        setNavigationMarker(coords, asset.name);
+        ElMessage.success(`已跳转到新数据: ${asset.name}`);
+    }
+};
+
 
 // Init Map
 onMounted(async () => {
@@ -308,7 +385,6 @@ onMounted(async () => {
           updateBaseMapLayers();
 
           // Mock Data Layer (Cluster)
-          const geoPointSource = new VectorSource();
           addClusterLayer(geoPointSource, 60);
 
           // Load Data
@@ -355,14 +431,14 @@ onMounted(async () => {
                         });
                     } else {
                         // Normal feature
-                         const props = feature.getProperties();
-                         const clone = feature.clone();
-                         // clone.setStyle(null);
-                         highlightSource.addFeature(clone);
-                         
-                         if (props.id && props.name) {
-                             selected.push(props as GeoDataItem);
-                         }
+                        const props = feature.getProperties();
+                        const clone = feature.clone();
+                        // clone.setStyle(null);
+                        highlightSource.addFeature(clone);
+                        
+                        if (props.id && props.name) {
+                            selected.push(props as GeoDataItem);
+                        }
                     }
                 });
 
@@ -378,12 +454,64 @@ onMounted(async () => {
                 currentFeature.value = null;
                 sidePanelVisible.value = false;
                 highlightSource.clear(); // Clear highlights
+                closePopup();
+            },
+            async (_lon, _lat, coords) => {
+                // Identify Handler
+                const lonLat = toLonLat(coords);
+                // Show loading
+                // We can reuse popup for loading or result
+                popupInfo.value = { name: '查询中...', address: '正在识别周边数据...', loading: true };
+                if (popupOverlay) {
+                    popupOverlay.setPosition(coords);
+                }
+                
+                try {
+                    const res = await geoDataApi.identify(lonLat[0], lonLat[1]);
+                    const data = res.data || []; // Access the data array from response
+                    
+                    if (data && data.length > 0) {
+                        // Found something
+                        // For now just show the first one or a list summary
+                        const first = data[0];
+                        popupInfo.value = {
+                            ...first,
+                            address: `发现 ${data.length} 个目标`,
+                            loading: false
+                        };
+                    } else {
+                        // No result
+                        popupInfo.value = {
+                            name: '无数据',
+                            address: '该位置周边 100m 无地质数据',
+                            loading: false
+                        };
+                    }
+                } catch (e) {
+                    console.error(e);
+                    popupInfo.value = {
+                        name: '查询失败',
+                        address: '服务请求异常',
+                        loading: false
+                    };
+                }
             }
           );
 
           if (mouseTooltipRef.value) {
               initTooltip(mouseTooltipRef.value);
           }
+          
+          if (popupRef.value && map.value) {
+            popupOverlay = new Overlay({
+              element: popupRef.value,
+              positioning: 'bottom-center',
+              stopEvent: true,
+              offset: [0, -10]
+            });
+            map.value.addOverlay(popupOverlay);
+          }
+          
           console.log('MapView initialization complete');
       } catch (error: any) {
           console.error('Failed to initialize map:', error);
@@ -461,17 +589,23 @@ const handleSearchSuggestions = async (queryString: string, cb: (results: any[])
 
 const searchTiandituPOI = async (keyword: string) => {
     try {
-        const postStr = JSON.stringify({
+        const postObj = {
             keyWord: keyword,
             level: "11",
             mapBound: "-180,-90,180,90",
             queryType: "1",
             start: "0",
             count: "5"
-        });
-        const url = `https://api.tianditu.gov.cn/search?postStr=${postStr}&type=query&tk=ba13e30aae52239f8056f1c7421cae7c`;
+        };
+        const postStr = JSON.stringify(postObj);
+        // 使用 encodeURIComponent 编码 postStr
+        const url = `https://api.tianditu.gov.cn/search?postStr=${encodeURIComponent(postStr)}&type=query&tk=ba13e30aae52239f8056f1c7421cae7c`;
         
         const res = await fetch(url);
+        if (!res.ok) {
+            console.warn(`TDT Search failed with status: ${res.status}`);
+            return [];
+        }
         const data = await res.json();
         
         if (data.pois && Array.isArray(data.pois)) {
@@ -513,13 +647,19 @@ const handleSelectResult = (item: any) => {
         if (map.value) {
             map.value.getView().animate({
                 center: coords,
-                zoom: 10,
+                zoom: 14,
                 duration: 1000
             });
         }
         
-        setNavigationMarker(coords, item.name, true);
-        ElMessage.success(`已定位到: ${item.name}`);
+        // Show Popup
+        popupInfo.value = item;
+        if (popupOverlay) {
+          popupOverlay.setPosition(coords);
+        }
+        
+        // setNavigationMarker(coords, item.name, true);
+        // ElMessage.success(`已定位到: ${item.name}`);
     }
 };
 
@@ -691,6 +831,7 @@ onUnmounted(() => {
         removeInteractions();
         // Clear sources to free memory
         navigationSource.clear();
+        geoPointSource.clear();
     }
 });
 </script>
@@ -702,14 +843,99 @@ onUnmounted(() => {
   transition: none !important;
 }
 
-.map-view-container {
+.map-popup-overlay {
   position: absolute;
-  top: 0;
-  left: 0;
+  min-width: 200px;
+}
+
+.popup-content {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  animation: popup-fade-in 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  position: relative;
+}
+
+.popup-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.popup-title {
+  font-weight: 600;
+  font-size: 16px;
+  color: #1d1d1f;
+}
+
+.popup-body {
+  font-size: 14px;
+  color: #86868b;
+}
+
+.popup-address {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.popup-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.ripple-container {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   width: 100%;
-  height: 100vh;
-  overflow: hidden;
-  background-color: #f5f7fa; /* Fallback color */
+  height: 100%;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.ripple {
+  width: 20px;
+  height: 20px;
+  background: rgba(0, 113, 227, 0.4);
+  border-radius: 50%;
+  position: absolute;
+  top: 100%; /* Anchor to bottom point */
+  left: 50%;
+  transform: translate(-50%, -50%);
+  animation: ripple-effect 2s infinite;
+}
+
+@keyframes ripple-effect {
+  0% {
+    width: 0;
+    height: 0;
+    opacity: 0.8;
+  }
+  100% {
+    width: 100px;
+    height: 100px;
+    opacity: 0;
+  }
+}
+
+@keyframes popup-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .mouse-tooltip {

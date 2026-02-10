@@ -2,13 +2,16 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
-from typing import List, Union
+from sqlalchemy import func, text
+from typing import List, Union, Optional
 import shutil
 from pathlib import Path
 from urllib.parse import quote
 import io
 import zipfile
 from pydantic import BaseModel
+import uuid
+from datetime import datetime, timedelta
 
 from app.core.database import get_db
 from app.core.config import settings
@@ -17,8 +20,6 @@ from app.models.geo_asset import GeoAsset
 from app.services.spatial_service import SpatialService
 from app.services.parser_service import ParserService
 from app.schemas import GeoDataListResponse, GeoDataItem
-from sqlalchemy import func
-from datetime import datetime, timedelta
 
 router = APIRouter()
 
@@ -26,7 +27,6 @@ router = APIRouter()
 async def get_geodata_stats(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     """获取数据统计信息"""
     # 1. 矢量 vs 栅格 比例
-    # 简单起见，按 file_type 分组
     type_counts = db.query(
         GeoAsset.file_type, 
         func.count(GeoAsset.id)
@@ -93,6 +93,69 @@ async def get_geodata_detail(id: int, db: Session = Depends(get_db), current_use
         "upload_time": asset.updated_at.strftime("%Y-%m-%d %H:%M:%S") if asset.updated_at else "",
         "metadata": metadata
     }
+
+@router.get("/identify", response_model=GeoDataListResponse)
+async def identify_geodata(
+    lat: float, 
+    lon: float,
+    buffer: float = 100.0,
+    db: Session = Depends(get_db), 
+    current_user = Depends(get_current_user)
+):
+    """
+    空间属性识别：查找点击位置周围一定范围内的数据
+    """
+    try:
+        # 构造查询点 (SRID 4326)
+        pt_view = func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326)
+        
+        # 查找范围内的点 (使用 ST_DWithin 计算地理距离，单位：米)
+        # 注意：ST_DWithin(geography, geography, distance_meters)
+        # 这里我们将 geometry 转为 geography 来进行米单位的计算
+        
+        # 1. 查找矢量/点位数据
+        # 逻辑：点的 center_x/y 在点击点 buffer 范围内
+        query = db.query(GeoAsset).filter(
+            GeoAsset.is_sidecar == False,
+            GeoAsset.center_x.isnot(None),
+            GeoAsset.center_y.isnot(None),
+            func.ST_DWithin(
+                func.ST_Cast(func.ST_SetSRID(func.ST_MakePoint(GeoAsset.center_x, GeoAsset.center_y), 4326), 'Geography'),
+                func.ST_Cast(pt_view, 'Geography'),
+                buffer
+            )
+        ).limit(10) # 限制返回数量
+        
+        results = query.all()
+        data_list = []
+        
+        for asset in results:
+            full_path = settings.STORAGE_DIR / asset.file_path
+            exists = full_path.exists()
+            
+            extent = None
+            if asset.extent_min_x is not None:
+                extent = [asset.extent_min_x, asset.extent_min_y, asset.extent_max_x, asset.extent_max_y]
+                
+            data_list.append(GeoDataItem(
+                id=asset.id,
+                name=asset.name,
+                type=asset.file_type,
+                uploadTime=asset.updated_at.strftime("%Y-%m-%d %H:%M:%S") if asset.updated_at else "",
+                extent=extent,
+                srid=asset.srid,
+                exists=exists,
+                center_x=asset.center_x,
+                center_y=asset.center_y,
+                description=asset.description,
+                source="internal"
+            ))
+            
+        return GeoDataListResponse(data=data_list, total=len(data_list))
+        
+    except Exception as e:
+        print(f"Error in identify: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/list", response_model=GeoDataListResponse)
 async def get_geodata_list(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
@@ -170,6 +233,7 @@ async def search_geodata(
         ).order_by(distance_expr).limit(5)
         
         results = query.all()
+        data_list = []
         
         for asset, dist in results:
             full_path = settings.STORAGE_DIR / asset.file_path
@@ -198,100 +262,117 @@ async def search_geodata(
 
     # 如果有关键字
     if q:
-        base_query = base_query.filter(
-            (GeoAsset.name.ilike(f"%{q}%")) | 
-            (GeoAsset.file_path.ilike(f"%{q}%")) |
-            (GeoAsset.description.ilike(f"%{q}%"))
-        )
-    
-    # 如果有坐标，计算距离 (附近搜索)
-    if lat is not None and lon is not None:
-        # 使用 PostGIS 计算距离
-        # 构造 Point(center_x, center_y) 并设置 SRID 4326
-        # 假设 center_x/y 也是 4326 (Lon/Lat)
-        pt_asset = func.ST_SetSRID(func.ST_MakePoint(GeoAsset.center_x, GeoAsset.center_y), 4326)
-        pt_view = func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326)
-        
-        # 计算距离 (转为 Geography 以获取米单位)
-        distance_expr = func.ST_Distance(
-            func.ST_Cast(pt_asset, 'Geography'),
-            func.ST_Cast(pt_view, 'Geography')
-        )
-        
-        # 修改查询以包含距离
-        # 必须过滤掉 center_x/y 为空的记录
-        query = db.query(GeoAsset, distance_expr.label('distance')).filter(
-            GeoAsset.is_sidecar == False,
-            GeoAsset.center_x.isnot(None),
-            GeoAsset.center_y.isnot(None)
-        )
-        
-        if q:
-            query = query.filter(
+        try:
+            base_query = base_query.filter(
                 (GeoAsset.name.ilike(f"%{q}%")) | 
                 (GeoAsset.file_path.ilike(f"%{q}%")) |
                 (GeoAsset.description.ilike(f"%{q}%"))
             )
+        except Exception as e:
+            print(f"Error constructing search query: {e}")
+            pass
+    
+    # 如果有坐标，计算距离 (附近搜索)
+    if lat is not None and lon is not None:
+        try:
+            # 使用 PostGIS 计算距离
+            pt_asset = func.ST_SetSRID(func.ST_MakePoint(GeoAsset.center_x, GeoAsset.center_y), 4326)
+            pt_view = func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326)
             
-        # 按距离排序
-        results = query.order_by(distance_expr).limit(50).all()
-        
-        for asset, dist in results:
-            full_path = settings.STORAGE_DIR / asset.file_path
-            exists = full_path.exists()
+            # 计算距离 (转为 Geography 以获取米单位)
+            distance_expr = func.ST_Distance(
+                func.ST_Cast(pt_asset, 'Geography'),
+                func.ST_Cast(pt_view, 'Geography')
+            )
             
-            extent = None
-            if asset.extent_min_x is not None:
-                extent = [asset.extent_min_x, asset.extent_min_y, asset.extent_max_x, asset.extent_max_y]
+            # 修改查询以包含距离
+            query = db.query(GeoAsset, distance_expr.label('distance')).filter(
+                GeoAsset.is_sidecar == False,
+                GeoAsset.center_x.isnot(None),
+                GeoAsset.center_y.isnot(None)
+            )
+            
+            if q:
+                query = query.filter(
+                    (GeoAsset.name.ilike(f"%{q}%")) | 
+                    (GeoAsset.file_path.ilike(f"%{q}%")) |
+                    (GeoAsset.description.ilike(f"%{q}%"))
+                )
                 
-            data_list.append(GeoDataItem(
-                id=asset.id,
-                name=asset.name,
-                type=asset.file_type,
-                uploadTime=asset.updated_at.strftime("%Y-%m-%d %H:%M:%S") if asset.updated_at else "",
-                extent=extent,
-                srid=asset.srid,
-                exists=exists,
-                center_x=asset.center_x,
-                center_y=asset.center_y,
-                distance=dist, # 米
-                description=asset.description,
-                source="internal"
-            ))
+            # 按距离排序
+            results = query.order_by(distance_expr).limit(50).all()
+            
+            data_list = []
+            for asset, dist in results:
+                full_path = settings.STORAGE_DIR / asset.file_path
+                exists = full_path.exists()
+                
+                extent = None
+                if asset.extent_min_x is not None:
+                    extent = [asset.extent_min_x, asset.extent_min_y, asset.extent_max_x, asset.extent_max_y]
+                    
+                data_list.append(GeoDataItem(
+                    id=asset.id,
+                    name=asset.name,
+                    type=asset.file_type,
+                    uploadTime=asset.updated_at.strftime("%Y-%m-%d %H:%M:%S") if asset.updated_at else "",
+                    extent=extent,
+                    srid=asset.srid,
+                    exists=exists,
+                    center_x=asset.center_x,
+                    center_y=asset.center_y,
+                    distance=dist, # 米
+                    description=asset.description,
+                    source="internal"
+                ))
+            
+            return GeoDataListResponse(data=data_list, total=len(data_list))
+
+        except Exception as e:
+             print(f"Error in nearby search: {e}")
+             pass
             
     else:
         # 仅关键字搜索
-        assets = base_query.order_by(GeoAsset.updated_at.desc()).all()
-        
-        for asset in assets:
-            full_path = settings.STORAGE_DIR / asset.file_path
-            exists = full_path.exists()
+        try:
+            assets = base_query.order_by(GeoAsset.updated_at.desc()).all()
+            data_list = []
             
-            extent = None
-            if asset.extent_min_x is not None:
-                extent = [asset.extent_min_x, asset.extent_min_y, asset.extent_max_x, asset.extent_max_y]
+            for asset in assets:
+                full_path = settings.STORAGE_DIR / asset.file_path
+                exists = full_path.exists()
                 
-            center_x = asset.center_x
-            center_y = asset.center_y
-            if center_x is None and extent:
-                center_x = (extent[0] + extent[2]) / 2
-                center_y = (extent[1] + extent[3]) / 2
-                
-            data_list.append(GeoDataItem(
-                id=asset.id,
-                name=asset.name,
-                type=asset.file_type,
-                uploadTime=asset.updated_at.strftime("%Y-%m-%d %H:%M:%S") if asset.updated_at else "",
-                extent=extent,
-                srid=asset.srid,
-                exists=exists,
-                center_x=center_x,
-                center_y=center_y,
-                description=asset.description,
-                source="internal"
-            ))
+                extent = None
+                if asset.extent_min_x is not None:
+                    extent = [asset.extent_min_x, asset.extent_min_y, asset.extent_max_x, asset.extent_max_y]
+                    
+                center_x = asset.center_x
+                center_y = asset.center_y
+                if center_x is None and extent:
+                    center_x = (extent[0] + extent[2]) / 2
+                    center_y = (extent[1] + extent[3]) / 2
+                    
+                data_list.append(GeoDataItem(
+                    id=asset.id,
+                    name=asset.name,
+                    type=asset.file_type,
+                    uploadTime=asset.updated_at.strftime("%Y-%m-%d %H:%M:%S") if asset.updated_at else "",
+                    extent=extent,
+                    srid=asset.srid,
+                    exists=exists,
+                    center_x=center_x,
+                    center_y=center_y,
+                    description=asset.description,
+                    source="internal"
+                ))
+            
+            return GeoDataListResponse(data=data_list, total=len(data_list))
+
+        except Exception as e:
+            print(f"Error in keyword search: {e}")
+            pass
         
-    return GeoDataListResponse(data=data_list, total=len(data_list))
+    return GeoDataListResponse(data=[], total=0)
 
 @router.post("/upload")
 async def upload_files(
@@ -306,7 +387,7 @@ async def upload_files(
     if not files:
         raise HTTPException(status_code=422, detail="No files provided. Please upload at least one file.")
 
-    # 1. 定义允许的扩展名和批次ID
+    # 1. 定义允许的扩展名
     ALLOWED_EXTENSIONS = {
         # 矢量数据
         '.shp', '.shx', '.dbf', '.prj', '.cpg', '.sbn', '.sbx', '.geojson', '.json', '.kml', '.gpx',
@@ -318,9 +399,6 @@ async def upload_files(
         '.zip', '.rar', '.7z'
     }
     
-    import uuid
-    from datetime import datetime
-    
     batch_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     upload_dir = settings.TEMP_DIR / batch_id
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -328,6 +406,7 @@ async def upload_files(
     uploaded_file_paths = []
     processed_assets = []
     errors = []
+    zip_results = {}
     
     try:
         # 2. 保存所有文件到临时批次目录
@@ -351,30 +430,26 @@ async def upload_files(
              raise HTTPException(status_code=400, detail=f"上传失败: {'; '.join(errors)}")
 
         # 3. 分析文件类型并分类处理
-        # 识别主文件
         shp_files = [f for f in uploaded_file_paths if f.suffix.lower() == '.shp']
         tif_files = [f for f in uploaded_file_paths if f.suffix.lower() in ['.tif', '.tiff']]
         zip_files = [f for f in uploaded_file_paths if f.suffix.lower() == '.zip']
         tabular_files = [f for f in uploaded_file_paths if f.suffix.lower() in ['.csv', '.txt']]
         
-        # 3.1 处理 Shapefile (需检查完整性)
+        # 3.1 处理 Shapefile
         for shp_path in shp_files:
             stem = shp_path.stem
-            # 检查必须的 sidecar 文件 (.shx, .dbf)
+            # 检查必须的 sidecar 文件
             required_extensions = ['.shx', '.dbf']
             missing = []
             sidecars = []
             
-            # 在当前批次目录中查找同名文件
             for req_ext in required_extensions:
                 req_file = upload_dir / f"{stem}{req_ext}"
                 if not req_file.exists():
-                    # 尝试查找不同大小写的情况? 暂时假设文件名一致
                     missing.append(req_ext)
                 else:
                     sidecars.append(req_file)
             
-            # 还要查找其他可选 sidecar (.prj, .cpg, etc)
             optional_extensions = ['.prj', '.cpg', '.sbn', '.sbx', '.xml']
             for opt_ext in optional_extensions:
                 opt_file = upload_dir / f"{stem}{opt_ext}"
@@ -389,33 +464,51 @@ async def upload_files(
             target_dir = settings.VECTOR_DIR / batch_id
             target_dir.mkdir(parents=True, exist_ok=True)
             
-            # 移动主文件
             target_shp = target_dir / shp_path.name
             shutil.move(str(shp_path), str(target_shp))
             
-            # 移动 Sidecars
             for sidecar in sidecars:
                 shutil.move(str(sidecar), str(target_dir / sidecar.name))
             
-            # 入库与解析
             try:
-                gdf = ParserService.parse_vector_file(target_shp, target_crs="EPSG:4326")
-                bounds = gdf.total_bounds
-                extent_min_x = float(bounds[0])
-                extent_min_y = float(bounds[1])
-                extent_max_x = float(bounds[2])
-                extent_max_y = float(bounds[3])
+                # 使用 fiona 读取元数据
+                import fiona
+                
+                srid = 4326 # 默认
+                bbox = None
+                
+                try:
+                    with fiona.open(str(target_shp)) as src:
+                        bbox = src.bounds
+                        if src.crs and 'init' in src.crs:
+                            # 尝试解析 epsg:4326 格式
+                            try:
+                                srid = int(src.crs['init'].split(':')[1])
+                            except:
+                                pass
+                except Exception as e:
+                    print(f"Fiona read failed: {e}")
+                    # Fallback to ParserService if fiona fails (e.g. missing dependencies or driver)
+                    pass
+
+                # 如果没有 bbox，尝试读取全部
+                if not bbox:
+                    gdf = ParserService.parse_vector_file(target_shp, target_crs="EPSG:4326")
+                    bounds = gdf.total_bounds
+                    extent_min_x, extent_min_y, extent_max_x, extent_max_y = map(float, bounds)
+                    srid = 4326 # 已转为 4326
+                else:
+                    extent_min_x, extent_min_y, extent_max_x, extent_max_y = map(float, bbox)
+                
                 center_x = (extent_min_x + extent_max_x) / 2
                 center_y = (extent_min_y + extent_max_y) / 2
-
-                # 1. 创建 GeoAsset
+                
                 asset = GeoAsset(
-                    name=shp_path.name,
+                    name=stem,
                     file_path=str(target_shp.relative_to(settings.STORAGE_DIR)),
                     file_type="矢量",
-                    sub_type="矢量/SHP",
-                    is_sidecar=False,
-                    srid=4326,
+                    sub_type="Shapefile",
+                    srid=srid,
                     extent_min_x=extent_min_x,
                     extent_min_y=extent_min_y,
                     extent_max_x=extent_max_x,
@@ -426,55 +519,131 @@ async def upload_files(
                 db.add(asset)
                 db.commit()
                 db.refresh(asset)
-                processed_assets.append({"id": asset.id, "name": asset.name, "type": "shp"})
                 
-                # 2. 解析内容 (可选，耗时操作可放入后台任务)
-                # await run_in_threadpool(SpatialService.process_and_import_vector, target_shp, db)
-                # 这里为了即时反馈，我们简单尝试导入，失败不影响上传成功
-                try:
-                    count = SpatialService.process_and_import_vector(target_shp, db)
-                    processed_assets[-1]["features_count"] = count
-                except Exception as e:
-                    print(f"矢量解析警告: {e}")
-                    processed_assets[-1]["warning"] = f"上传成功但解析失败: {str(e)}"
-                    
-            except Exception as e:
-                errors.append(f"处理 Shapefile {shp_path.name} 失败: {str(e)}")
-
-        # 3.2 处理 TIFF
-        for tif_path in tif_files:
-            # 查找关联的 .tfw, .prj
-            related_files = []
-            stem = tif_path.stem
-            for ext in ['.tfw', '.prj', '.xml', '.ovr']:
-                f = upload_dir / f"{stem}{ext}"
-                if f.exists():
-                    related_files.append(f)
-            
-            target_dir = settings.RASTER_DIR / batch_id
-            target_dir.mkdir(parents=True, exist_ok=True)
-            
-            target_tif = target_dir / tif_path.name
-            shutil.move(str(tif_path), str(target_tif))
-            
-            for rf in related_files:
-                shutil.move(str(rf), str(target_dir / rf.name))
-                
-            try:
-                asset = SpatialService.process_and_save_geo_file(target_tif, settings.STORAGE_DIR, db)
-                asset.sub_type = "影像"
+                # 更新 geometry 字段
+                # 如果 srid 不是 4326，需要 ST_Transform，但这里简单起见假设已经正确设置 srid
+                # 并尝试将其转为 4326 存储到 extent 字段 (Geometry(Polygon, 4326))
+                db.execute(text(f"""
+                    UPDATE geo_assets 
+                    SET extent = ST_SetSRID(ST_MakeEnvelope(:minx, :miny, :maxx, :maxy, :srid), :srid)
+                    WHERE id = :id
+                """), {
+                    "minx": extent_min_x,
+                    "miny": extent_min_y,
+                    "maxx": extent_max_x,
+                    "maxy": extent_max_y,
+                    "srid": srid,
+                    "id": asset.id
+                })
+                # 如果 srid != 4326，再转换一次
+                if srid != 4326:
+                     db.execute(text(f"""
+                        UPDATE geo_assets 
+                        SET extent = ST_Transform(extent, 4326)
+                        WHERE id = :id
+                    """), {"id": asset.id})
+                     
                 db.commit()
-                processed_assets.append({"id": asset.id, "name": asset.name, "type": "tif"})
+                processed_assets.append({
+                    "id": asset.id, 
+                    "name": asset.name, 
+                    "type": "shp", 
+                    "center_x": center_x, 
+                    "center_y": center_y,
+                    "srid": srid
+                })
+                
             except Exception as e:
-                errors.append(f"处理 TIFF {tif_path.name} 失败: {str(e)}")
+                db.rollback()
+                errors.append(f"解析 Shapefile {shp_path.name} 失败: {str(e)}")
+                
+        # 3.2 处理 GeoTIFF
+        for tif_path in tif_files:
+            try:
+                target_dir = settings.RASTER_DIR / batch_id
+                target_dir.mkdir(parents=True, exist_ok=True)
+                target_tif = target_dir / tif_path.name
+                shutil.move(str(tif_path), str(target_tif))
+                
+                stem = tif_path.stem
+                tfw_path = upload_dir / f"{stem}.tfw"
+                if tfw_path.exists():
+                    shutil.move(str(tfw_path), str(target_dir / tfw_path.name))
+                
+                import rasterio
+                from rasterio.warp import transform_bounds
+                
+                width, height = 0, 0
+                srid = 4326
+                left, bottom, right, top = 0, 0, 0, 0
+                
+                with rasterio.open(str(target_tif)) as src:
+                    bounds = src.bounds
+                    if src.crs:
+                        srid = src.crs.to_epsg() or 4326
+                    
+                    if srid != 4326:
+                        try:
+                            left, bottom, right, top = transform_bounds(src.crs, 'EPSG:4326', *bounds)
+                        except:
+                             left, bottom, right, top = bounds
+                    else:
+                        left, bottom, right, top = bounds
+                        
+                    width = src.width
+                    height = src.height
+                    
+                center_x = (left + right) / 2
+                center_y = (bottom + top) / 2
+                
+                asset = GeoAsset(
+                    name=stem,
+                    file_path=str(target_tif.relative_to(settings.STORAGE_DIR)),
+                    file_type="栅格",
+                    sub_type="GeoTIFF",
+                    srid=srid,
+                    width=width,
+                    height=height,
+                    extent_min_x=left,
+                    extent_min_y=bottom,
+                    extent_max_x=right,
+                    extent_max_y=top,
+                    center_x=center_x,
+                    center_y=center_y
+                )
+                db.add(asset)
+                db.commit()
+                db.refresh(asset)
+                
+                db.execute(text(f"""
+                    UPDATE geo_assets 
+                    SET extent = ST_SetSRID(ST_MakeEnvelope(:minx, :miny, :maxx, :maxy, 4326), 4326)
+                    WHERE id = :id
+                """), {
+                    "minx": left,
+                    "miny": bottom,
+                    "maxx": right,
+                    "maxy": top,
+                    "id": asset.id
+                })
+                db.commit()
+                processed_assets.append({
+                    "id": asset.id, 
+                    "name": asset.name, 
+                    "type": "tif",
+                    "center_x": center_x,
+                    "center_y": center_y,
+                    "srid": srid
+                })
+                
+            except Exception as e:
+                db.rollback()
+                errors.append(f"解析 GeoTIFF {tif_path.name} 失败: {str(e)}")
 
-        # 3.3 处理 ZIP (调用现有服务)
-        zip_results = {}
+        # 3.3 处理 ZIP
         if zip_files:
             for zip_path in zip_files:
                 try:
-                    # 移动到 TEMP_DIR (根级) 或保持在 batch 目录
-                    # SpatialService.process_zip_archive 会解压
                     res = await run_in_threadpool(
                         SpatialService.process_zip_archive, 
                         zip_path, 
@@ -508,23 +677,20 @@ async def upload_files(
             except Exception as e:
                  errors.append(f"处理表格 {tab_path.name} 失败: {str(e)}")
 
-        # 4. 清理残留文件 (未被识别为主要数据或Sidecar的文件)
-        # 如果 upload_dir 还有文件，说明是多余的或者孤立的 Sidecar
-        # 可以选择保留在 temp 或删除
-        # 这里选择保留在 temp/batch_id 以便后续排查，或者定期清理
+        # 4. 清理
+        shutil.rmtree(upload_dir, ignore_errors=True)
         
         return JSONResponse(status_code=200, content={
-            "message": "文件处理完成",
+            "message": f"处理完成: 成功 {len(processed_assets)} 个, 失败 {len(errors)} 个",
             "processed": processed_assets,
             "errors": errors,
             "zip_results": zip_results
         })
-
+        
     except Exception as e:
-        # 清理
         if upload_dir.exists():
             shutil.rmtree(upload_dir, ignore_errors=True)
-        raise HTTPException(status_code=500, detail=f"服务器内部错误: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"上传处理过程错误: {str(e)}")
 
 @router.get("/preview/{id}")
 async def preview_geodata(id: int, db: Session = Depends(get_db)):
@@ -537,8 +703,6 @@ async def preview_geodata(id: int, db: Session = Depends(get_db)):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Physical file not found")
         
-    # 这里为了简化，直接调用 PIL 转换逻辑，或者也可以封装进 Service
-    # 为节省时间，我将复用之前的转换逻辑，但建议放在 Service 中
     try:
         from PIL import Image
         import io

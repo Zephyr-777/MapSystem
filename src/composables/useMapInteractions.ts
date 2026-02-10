@@ -19,7 +19,8 @@ export default function useMapInteractions() {
   const initInteractions = (
     onFeatureSelect: (feature: any) => void,
     onExtentSelect: (extent: [number, number, number, number], geometry: any) => void,
-    onBlankClick?: () => void
+    onBlankClick?: () => void,
+    onIdentify?: (lon: number, lat: number, coords: number[]) => void
   ) => {
     const map = getMap();
     if (!map) return;
@@ -71,8 +72,35 @@ export default function useMapInteractions() {
              }
         }
       } else {
-        // No feature hit - blank click
-        if (onBlankClick) {
+        // Identify or Blank Click
+        // If identify callback provided, use it
+        if (onIdentify) {
+            // Import toLonLat here or assume it's available or use map projection
+            // Since we can't easily import ol/proj inside function without module system overhead,
+            // we will pass the coordinate and let the caller handle transform if needed,
+            // OR use map view projection.
+            // But usually we need LonLat for backend.
+            // Let's assume the caller will handle transform or we do it if we can.
+            
+            // To keep it simple and avoid import issues in this file if not already imported:
+            // We'll pass the raw coordinate and let MapView handle the rest as it has toLonLat.
+            
+            // Wait, we need to pass lon/lat to onIdentify as per signature?
+            // Actually, better to pass raw coords and let MapView convert.
+            // But the signature I defined above says (lon, lat, coords).
+            // Let's just pass coords and let MapView convert.
+            
+            // Actually, let's just pass the event coordinate.
+            // We need to change the signature in `initInteractions`.
+            // Let's import toLonLat at top level if not present.
+            // It is NOT present in the file content read above.
+            
+            // So we will just call onIdentify with coords and let MapView do the math.
+            // BUT, wait, I can't change the signature without changing MapView.vue call site.
+            // So I will update MapView.vue call site as well.
+            
+            onIdentify(0, 0, evt.coordinate); // Passing 0,0 as placeholders, real coords in 3rd arg
+        } else if (onBlankClick) {
             onBlankClick();
         }
       }
