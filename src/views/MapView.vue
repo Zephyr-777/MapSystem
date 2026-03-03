@@ -152,7 +152,7 @@
         </Transition>
 
         <Transition name="fade-slide">
-          <StatsPanel v-if="showAttributeDashboard" />
+          <StatsPanel />
         </Transition>
         
       </div>
@@ -219,7 +219,7 @@ const initError = ref(false);
 const errorMessage = ref('');
 const showLayerPanel = ref(false);
 const sidePanelVisible = ref(false);
-const showAttributeDashboard = ref(true);
+const showAttributeDashboard = ref(true); // Now controlled by StatsPanel trigger
 const currentFeature = ref<GeoDataItem | null>(null);
 const showUploadDialog = ref(false);
 const locating = ref(false);
@@ -334,6 +334,9 @@ const handleBufferDraw = async (geometry: any) => {
 const toggleIdentifyTool = () => {
   if (activeTool.value === 'identify') {
     activeTool.value = '';
+    // Optional: Hide panel if closing tool? 
+    // Usually, we want it to stay if a feature is selected, 
+    // but the task says "only appear when clicking a geologic point".
   } else {
     activeTool.value = 'identify';
     isNearbyActive.value = false;
@@ -637,8 +640,19 @@ const handleUploadSuccess = async (asset: any) => {
     // Reload data
     await loadGeoData(geoPointSource);
     
-    // Fly to
-    if (asset.center_x && asset.center_y) {
+    // Fit to extent if available
+    if (asset.extent && Array.isArray(asset.extent) && asset.extent.length === 4) {
+        // Assume extent is [minX, minY, maxX, maxY] in 4326 (LonLat)
+        const extent = asset.extent;
+        // Transform extent corners to Map Projection (Web Mercator)
+        // Note: fromLonLat takes [lon, lat]
+        const min = fromLonLat([extent[0], extent[1]]);
+        const max = fromLonLat([extent[2], extent[3]]);
+        const mapExtent = [min[0], min[1], max[0], max[1]];
+        
+        map.value?.getView().fit(mapExtent, { padding: [100, 100, 100, 100], duration: 1000 });
+        ElMessage.success(`已缩放到新数据范围: ${asset.name}`);
+    } else if (asset.center_x && asset.center_y) {
         const coords = toMapCoords([asset.center_x, asset.center_y], asset.srid || 4326);
         flyTo(coords);
         setNavigationMarker(coords, asset.name);

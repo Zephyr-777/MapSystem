@@ -27,7 +27,7 @@
       </div>
       <div class="upload-text">
         <h3 class="primary-text">拖拽文件到这里</h3>
-        <p class="secondary-text">支持 SHP (含同名文件), ZIP, TIF, CSV</p>
+        <p class="secondary-text">支持 ZIP, NC, CSV, GeoJSON</p>
         <el-button type="primary" round size="small" class="select-btn">或者选择文件</el-button>
       </div>
     </div>
@@ -97,7 +97,10 @@ const progressStatus = computed(() => {
 
 const triggerFileInput = () => {
   if (uploading.value) return;
-  fileInputRef.value?.click();
+  if (fileInputRef.value) {
+    fileInputRef.value.accept = ".zip,.nc,.csv,.geojson";
+    fileInputRef.value.click();
+  }
 };
 
 const handleFileChange = (e: Event) => {

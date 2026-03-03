@@ -1,49 +1,102 @@
 <template>
-  <div class="stats-panel glass-morphism">
-    <div class="panel-header">
-      <span class="title">数据概览</span>
-      <div class="actions">
-        <el-button 
-          link 
-          size="small" 
-          @click="refreshData" 
-          :loading="loading"
-          title="刷新"
-          class="refresh-btn"
-        >
-          <el-icon><Refresh /></el-icon>
-        </el-button>
-      </div>
+  <div>
+    <!-- Trigger Area -->
+    <div 
+      class="trigger-area" 
+      @mouseenter="handleMouseEnter"
+    >
+      <div class="trigger-indicator"></div>
     </div>
-    
-    <div class="charts-container" v-loading="loading">
-      <!-- 饼图：数据类型分布 -->
-      <div class="chart-box">
-        <div class="chart-title">数据类型分布</div>
-        <div ref="pieChartRef" class="chart-instance"></div>
+
+    <!-- Panel -->
+    <transition name="slide-fade">
+      <div 
+        v-show="isStatsVisible" 
+        class="stats-panel glass-morphism"
+      >
+        <div class="panel-header">
+          <span class="title">数据概览</span>
+          <div class="actions">
+            <el-button 
+              link 
+              size="small" 
+              @click="refreshData" 
+              :loading="loading"
+              title="刷新"
+              class="action-btn"
+            >
+              <el-icon><Refresh /></el-icon>
+            </el-button>
+            <!-- Close Button -->
+            <el-button 
+              link 
+              size="small" 
+              @click="handleClose" 
+              title="关闭"
+              class="action-btn close-btn"
+            >
+              <el-icon><Close /></el-icon>
+            </el-button>
+          </div>
+        </div>
+        
+        <div class="charts-container" v-loading="loading">
+          <!-- 饼图：数据类型分布 -->
+          <div class="chart-box">
+            <div class="chart-title">数据类型分布</div>
+            <div ref="pieChartRef" class="chart-instance"></div>
+          </div>
+          
+          <!-- 柱状图：最近一周上传 -->
+          <div class="chart-box">
+            <div class="chart-title">近一周新增</div>
+            <div ref="barChartRef" class="chart-instance"></div>
+          </div>
+
+          <!-- Admin Only Actions -->
+          <div class="admin-actions" v-if="isAdmin">
+            <el-button type="primary" size="small" plain style="width: 100%">
+              导出统计数据
+            </el-button>
+          </div>
+        </div>
       </div>
-      
-      <!-- 柱状图：最近一周上传 -->
-      <div class="chart-box">
-        <div class="chart-title">近一周新增</div>
-        <div ref="barChartRef" class="chart-instance"></div>
-      </div>
-    </div>
+    </transition>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue';
 import * as echarts from 'echarts';
-import { Refresh } from '@element-plus/icons-vue';
+import { Refresh, Close } from '@element-plus/icons-vue';
 import { geoDataApi } from '@/api/geodata';
 import { ElMessage } from 'element-plus';
+import { useAuthStore } from '@/stores/auth';
+
+const authStore = useAuthStore();
+const isAdmin = computed(() => authStore.user?.role === 'admin');
 
 const loading = ref(false);
 const pieChartRef = ref<HTMLDivElement | null>(null);
 const barChartRef = ref<HTMLDivElement | null>(null);
 let pieChart: echarts.ECharts | null = null;
 let barChart: echarts.ECharts | null = null;
+
+const isStatsVisible = ref(false);
+
+const handleMouseEnter = () => {
+  if (!isStatsVisible.value) {
+    isStatsVisible.value = true;
+    // Resize charts when panel becomes visible
+    nextTick(() => {
+      handleResize();
+    });
+  }
+};
+
+const handleClose = () => {
+  isStatsVisible.value = false;
+};
 
 const refreshData = async () => {
   loading.value = true;
@@ -242,11 +295,37 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.trigger-area {
+  position: absolute;
+  top: 80px;
+  left: 0;
+  width: 20px;
+  height: 400px;
+  z-index: 98;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.trigger-indicator {
+  width: 4px;
+  height: 40px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 0 4px 4px 0;
+  transition: all 0.2s;
+}
+
+.trigger-area:hover .trigger-indicator {
+  width: 8px;
+  background: #0071E3;
+}
+
 .stats-panel {
   position: absolute;
-  top: 80px; /* Aligned with other controls */
+  top: 80px;
   left: 20px;
-  width: 300px;
+  width: 320px;
   z-index: 99;
   border-radius: 16px;
   display: flex;
@@ -255,9 +334,20 @@ onUnmounted(() => {
   transition: all 0.3s ease;
 }
 
+.slide-fade-enter-active,
+.slide-fade-leave-active {
+  transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.slide-fade-enter-from,
+.slide-fade-leave-to {
+  transform: translateX(-120%);
+  opacity: 0;
+}
+
 /* 玻璃质感核心类 */
 .glass-morphism {
-  background: rgba(255, 255, 255, 0.65);
+  background: rgba(255, 255, 255, 0.75);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.3);
@@ -279,10 +369,24 @@ onUnmounted(() => {
   letter-spacing: -0.3px;
 }
 
-.refresh-btn:hover {
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.action-btn {
+  color: #86868b;
+  font-size: 16px;
+  transition: all 0.2s;
+}
+
+.action-btn:hover {
   color: #0071E3;
-  transform: rotate(90deg);
-  transition: all 0.3s ease;
+  transform: scale(1.1);
+}
+
+.close-btn:hover {
+  color: #FF3B30;
 }
 
 .charts-container {
@@ -318,5 +422,11 @@ onUnmounted(() => {
 .chart-instance {
   width: 100%;
   height: 160px;
+}
+
+.admin-actions {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
 }
 </style>

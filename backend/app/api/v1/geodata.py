@@ -783,7 +783,8 @@ async def upload_files(
                     "type": "shp", 
                     "center_x": center_x, 
                     "center_y": center_y,
-                    "srid": srid
+                    "srid": srid,
+                    "extent": [extent_min_x, extent_min_y, extent_max_x, extent_max_y]
                 })
                 
             except Exception as e:
@@ -866,7 +867,8 @@ async def upload_files(
                     "type": "tif",
                     "center_x": center_x,
                     "center_y": center_y,
-                    "srid": srid
+                    "srid": srid,
+                    "extent": [left, bottom, right, top]
                 })
                 
             except Exception as e:
@@ -928,7 +930,8 @@ async def upload_files(
                     "name": asset.name, 
                     "type": "nc",
                     "center_x": center_x,
-                    "center_y": center_y
+                    "center_y": center_y,
+                    "extent": extent
                 })
                 
             except Exception as e:

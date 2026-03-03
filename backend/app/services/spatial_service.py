@@ -158,24 +158,20 @@ class SpatialService:
                 try:
                     lon = float(record[keys[lon_key]])
                     lat = float(record[keys[lat_key]])
-                    # 构造点几何 (WGS84 -> 3857)
-                    # 这里我们需要手动转换，或者让 PostGIS 做
-                    # 既然我们要求存 3857，我们最好在 Python 端转，或者构造 4326 然后 Transform
-                    # 为了简单，我们用 ST_Transform(ST_SetSRID(ST_Point(lon, lat), 4326), 3857)
+                    # 使用 ST_GeomFromText 将经纬度转为 geometry 点 (SRID 4326)
+                    # 注意：如果目标表是 3857，这里需要 ST_Transform
+                    # 假设 GeologicFeature.geometry 是 3857 (基于 geologic_feature.py 定义)
+                    # 则: ST_Transform(ST_GeomFromText('POINT(...)', 4326), 3857)
                     
-                    # 注意：SQLAlchemy 中插入 Geometry 需要 WKT 或 WKB，或者 func.ST_...
-                    # 这里我们使用 func.ST_Transform
-                    # geom = func.ST_Transform(
-                    #     func.ST_SetSRID(func.ST_Point(lon, lat), 4326), 
-                    #     3857
-                    # )
-                    geom = f"POINT({lon} {lat})"
+                    # 构造 Point WKT
+                    wkt = f"POINT({lon} {lat})"
+                    # 确保导入 func
+                    # from sqlalchemy import func
+                    geom = func.ST_Transform(func.ST_GeomFromText(wkt, 4326), 3857)
                 except:
                     pass
             
-            # 如果没有坐标，可能是纯属性表，或者需要 NLP 提取
-            # 这里如果不生成 geometry，则 geometry 字段为 null (如果允许) 或跳过
-            # GeologicFeature.geometry is nullable=False. So we skip if no geometry.
+            # 如果没有坐标，可能是纯属性表
             if geom is None:
                 continue
                 
@@ -183,7 +179,7 @@ class SpatialService:
             
             feature = GeologicFeature(
                 name=str(name),
-                type="Point", # 假设是点
+                type="Point",
                 properties=record,
                 geometry=geom
             )
