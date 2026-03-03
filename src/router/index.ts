@@ -17,6 +17,12 @@ const router = createRouter({
       meta: { requiresAuth: false }
     },
     {
+      path: '/gallery',
+      name: 'Gallery',
+      component: () => import('@/views/GalleryView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/',
       name: 'Layout',
       component: () => import('@/layouts/MainLayout.vue'),

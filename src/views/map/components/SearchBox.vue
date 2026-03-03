@@ -104,13 +104,9 @@ const formatDistance = (dist: number) => {
 
 <style scoped>
 .search-container {
-  position: absolute;
-  top: 30px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 100;
   width: 480px;
   max-width: 90%;
+  margin: 0 auto; /* Center if in a flex/block flow */
 }
 
 .glass-pill {
@@ -120,7 +116,7 @@ const formatDistance = (dist: number) => {
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.3);
-  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
   border-radius: 24px;
   padding: 4px 6px;
   height: 48px;

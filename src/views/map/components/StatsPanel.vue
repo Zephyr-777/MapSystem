@@ -48,16 +48,20 @@ let barChart: echarts.ECharts | null = null;
 const refreshData = async () => {
   loading.value = true;
   try {
-    const res = await geoDataApi.getStats();
-    // res.data is likely the actual data if using axios interceptor correctly, 
-    // but check if wrapper exists. Usually api.get returns the data directly if interceptor handles it.
-    // Based on geodata.ts, api.get returns typed response. 
-    // Let's assume res is the data payload { pie: [], bar: { categories: [], values: [] } }
+    const res = await geoDataApi.getSummary();
+    // res 应该直接是数据对象 { pie: [], bar: {} }
+    // 如果有 axios 拦截器处理，直接取 res
+    // 如果没有，取 res.data
     
-    const data = res.data || res; // Fallback
+    const data = (res as any).data || res;
     
-    updatePieChart(data.pie || []);
-    updateBarChart(data.bar || { categories: [], values: [] });
+    if (data.pie) {
+      updatePieChart(data.pie);
+    }
+    
+    if (data.bar) {
+      updateBarChart(data.bar);
+    }
     
   } catch (error) {
     console.error('Failed to fetch stats:', error);
@@ -99,11 +103,11 @@ const updatePieChart = (data: Array<{name: string, value: number}>) => {
       {
         name: '数据类型',
         type: 'pie',
-        radius: ['45%', '70%'],
-        center: ['50%', '50%'],
+        radius: ['40%', '70%'],
+        center: ['50%', '45%'],
         avoidLabelOverlap: false,
         itemStyle: {
-          borderRadius: 8,
+          borderRadius: 5,
           borderColor: '#fff',
           borderWidth: 2
         },
@@ -114,7 +118,7 @@ const updatePieChart = (data: Array<{name: string, value: number}>) => {
         emphasis: {
           label: {
             show: true,
-            fontSize: 14,
+            fontSize: 12,
             fontWeight: 'bold',
             color: '#1d1d1f'
           },
@@ -154,7 +158,7 @@ const updateBarChart = (data: { categories: string[], values: number[] }) => {
       top: '10%',
       left: '2%',
       right: '4%',
-      bottom: '2%',
+      bottom: '15%',
       containLabel: true
     },
     xAxis: [
@@ -166,7 +170,9 @@ const updateBarChart = (data: { categories: string[], values: number[] }) => {
         },
         axisLabel: {
           fontSize: 10,
-          color: '#86868b'
+          color: '#86868b',
+          interval: 0,
+          rotate: 30
         },
         axisLine: {
           lineStyle: {
@@ -186,15 +192,16 @@ const updateBarChart = (data: { categories: string[], values: number[] }) => {
           }
         },
         axisLabel: {
-          color: '#86868b'
+          color: '#86868b',
+          fontSize: 10
         }
       }
     ],
     series: [
       {
-        name: '上传数量',
+        name: '新增数据',
         type: 'bar',
-        barWidth: '50%',
+        barWidth: '40%',
         data: data.values,
         itemStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [

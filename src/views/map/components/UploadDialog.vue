@@ -2,13 +2,13 @@
   <el-dialog
     v-model="visible"
     title="上传地质数据"
-    width="500px"
+    width="600px"
     :close-on-click-modal="false"
     class="upload-dialog glass-panel"
     @closed="handleClosed"
   >
     <div 
-      class="upload-area"
+      class="upload-area breathing-effect"
       :class="{ 'is-dragover': isDragOver }"
       @dragover.prevent="isDragOver = true"
       @dragleave.prevent="isDragOver = false"
@@ -22,12 +22,13 @@
         style="display: none" 
         @change="handleFileChange"
       >
-      <div class="upload-icon">
-        <el-icon :size="48"><UploadFilled /></el-icon>
+      <div class="upload-icon-wrapper">
+        <el-icon :size="64" class="upload-icon"><UploadFilled /></el-icon>
       </div>
       <div class="upload-text">
-        <p class="primary-text">点击或拖拽文件到此处上传</p>
-        <p class="secondary-text">支持 SHP (及同名文件), ZIP, TIF, CSV 等格式</p>
+        <h3 class="primary-text">拖拽文件到这里</h3>
+        <p class="secondary-text">支持 SHP (含同名文件), ZIP, TIF, CSV</p>
+        <el-button type="primary" round size="small" class="select-btn">或者选择文件</el-button>
       </div>
     </div>
 
@@ -202,60 +203,112 @@ const handleClosed = () => {
 
 <style scoped>
 .upload-area {
-  border: 2px dashed #dcdfe6;
-  border-radius: 12px;
-  padding: 40px 20px;
+  border: 3px dashed rgba(64, 158, 255, 0.3);
+  border-radius: 20px;
+  padding: 60px 40px;
   text-align: center;
   cursor: pointer;
-  transition: all 0.3s;
-  background: rgba(245, 247, 250, 0.5);
+  transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 250px;
 }
 
 .upload-area:hover, .upload-area.is-dragover {
   border-color: #409eff;
-  background: rgba(64, 158, 255, 0.1);
+  background: rgba(255, 255, 255, 0.6);
+  transform: scale(1.02);
+  box-shadow: 0 12px 32px rgba(64, 158, 255, 0.15);
 }
 
-.upload-icon {
-  color: #909399;
-  margin-bottom: 16px;
+.breathing-effect {
+  animation: breathe 4s infinite ease-in-out;
+}
+
+@keyframes breathe {
+  0% { box-shadow: 0 4px 12px rgba(64, 158, 255, 0.05); border-color: rgba(64, 158, 255, 0.3); }
+  50% { box-shadow: 0 8px 24px rgba(64, 158, 255, 0.15); border-color: rgba(64, 158, 255, 0.6); }
+  100% { box-shadow: 0 4px 12px rgba(64, 158, 255, 0.05); border-color: rgba(64, 158, 255, 0.3); }
+}
+
+.upload-icon-wrapper {
+  margin-bottom: 20px;
+  color: #409eff;
+  background: rgba(64, 158, 255, 0.1);
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s;
+}
+
+.upload-area:hover .upload-icon-wrapper {
+  background: #409eff;
+  color: white;
+  transform: translateY(-5px);
 }
 
 .primary-text {
-  font-size: 16px;
-  color: #303133;
+  font-size: 20px;
+  font-weight: 600;
+  color: #1d1d1f;
   margin: 0 0 8px;
 }
 
 .secondary-text {
-  font-size: 12px;
-  color: #909399;
-  margin: 0;
+  font-size: 14px;
+  color: #86868b;
+  margin: 0 0 20px;
+}
+
+.select-btn {
+  margin-top: 10px;
+  padding: 8px 24px;
 }
 
 .file-list {
-  margin-top: 20px;
-  max-height: 150px;
+  margin-top: 24px;
+  max-height: 180px;
   overflow-y: auto;
+  padding-right: 4px;
 }
 
 .file-item {
   display: flex;
   align-items: center;
-  padding: 8px;
-  border-radius: 6px;
-  background: #f5f7fa;
-  margin-bottom: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.6);
+  margin-bottom: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  transition: all 0.2s;
+}
+
+.file-item:hover {
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
 .file-item .el-icon {
-  margin-right: 8px;
+  margin-right: 12px;
+  color: #409eff;
+  font-size: 18px;
 }
 
 .file-name {
   flex: 1;
   font-size: 14px;
-  color: #606266;
+  color: #1d1d1f;
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -263,18 +316,18 @@ const handleClosed = () => {
 
 .file-size {
   font-size: 12px;
-  color: #909399;
-  margin: 0 12px;
+  color: #86868b;
+  margin: 0 16px;
 }
 
 .progress-area {
-  margin-top: 20px;
+  margin-top: 24px;
 }
 
 .status-text {
-  font-size: 12px;
-  color: #606266;
-  margin-top: 4px;
+  font-size: 13px;
+  color: #86868b;
+  margin-top: 8px;
   text-align: center;
 }
 
@@ -282,10 +335,36 @@ const handleClosed = () => {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+  padding-top: 10px;
 }
 
 /* Glassmorphism for dialog */
 :deep(.upload-dialog) {
-  border-radius: 16px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+:deep(.el-dialog__header) {
+  margin-right: 0;
+  padding: 20px 24px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+:deep(.el-dialog__title) {
+  font-weight: 600;
+  font-size: 18px;
+}
+
+:deep(.el-dialog__body) {
+  padding: 24px;
+}
+
+:deep(.el-dialog__footer) {
+  padding: 20px 24px;
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
 }
 </style>

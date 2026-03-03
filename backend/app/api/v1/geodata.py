@@ -15,13 +15,97 @@ from datetime import datetime, timedelta
 
 from app.core.database import get_db
 from app.core.config import settings
+from app.core.security import role_checker
 from app.api.v1.auth import get_current_user
 from app.models.geo_asset import GeoAsset
 from app.services.spatial_service import SpatialService
 from app.services.parser_service import ParserService
+from app.services.netcdf_processor import NetCDFProcessor
 from app.schemas import GeoDataListResponse, GeoDataItem
 
 router = APIRouter()
+
+@router.get("/summary")
+async def get_stats_summary(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    """
+    获取统计摘要：
+    1. 数据类型分布 (矢量、栅格、NetCDF 等)
+    2. 过去 7 天每日新增数据量
+    """
+    try:
+        # 1. 数据类型分布 (按 file_type 或 sub_type)
+        # 优先使用 sub_type 如果有，否则 file_type
+        # 这里为了简单，我们统计 sub_type，如果为 null 则统计 file_type
+        # 或者直接统计 file_type 和 sub_type 的组合
+        
+        # 统计 file_type 分布
+        type_counts = db.query(
+            GeoAsset.file_type, 
+            func.count(GeoAsset.id)
+        ).filter(
+            GeoAsset.is_sidecar == False
+        ).group_by(GeoAsset.file_type).all()
+        
+        # 格式化为 ECharts pie data
+        # 映射一下名称使其更友好
+        pie_data = []
+        for t in type_counts:
+            name = t[0] or "未知"
+            # 细分 NetCDF
+            if name == "栅格":
+                 # 检查是否有 NetCDF
+                 nc_count = db.query(func.count(GeoAsset.id)).filter(
+                     GeoAsset.is_sidecar == False,
+                     GeoAsset.sub_type == 'NetCDF'
+                 ).scalar()
+                 
+                 tif_count = t[1] - (nc_count or 0)
+                 if nc_count > 0:
+                     pie_data.append({"name": "NetCDF", "value": nc_count})
+                 if tif_count > 0:
+                     pie_data.append({"name": "GeoTIFF", "value": tif_count})
+            else:
+                 pie_data.append({"name": name, "value": t[1]})
+
+        # 2. 过去 7 天每日新增
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=6)
+        
+        # SQLite 的 date 函数可能需要适配，PostgreSQL 使用 date_trunc 或 ::date
+        # 这里假设是 SQLite 或 PostgreSQL 兼容的 func.date
+        # 注意：GeoAsset.created_at 是上传时间
+        
+        daily_counts = db.query(
+            func.date(GeoAsset.created_at).label('date'),
+            func.count(GeoAsset.id)
+        ).filter(
+            GeoAsset.is_sidecar == False,
+            GeoAsset.created_at >= start_date
+        ).group_by(
+            func.date(GeoAsset.created_at)
+        ).all()
+        
+        date_map = {str(t[0]): t[1] for t in daily_counts if t[0]}
+        
+        bar_categories = []
+        bar_values = []
+        
+        for i in range(7):
+            d = start_date + timedelta(days=i)
+            d_str = d.strftime("%Y-%m-%d")
+            bar_categories.append(d.strftime("%m-%d"))
+            bar_values.append(date_map.get(d_str, 0))
+            
+        return {
+            "pie": pie_data,
+            "bar": {
+                "categories": bar_categories,
+                "values": bar_values
+            }
+        }
+    except Exception as e:
+        print(f"Stats summary error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/stats")
 async def get_geodata_stats(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
@@ -81,7 +165,14 @@ async def get_geodata_detail(id: int, db: Session = Depends(get_db), current_use
     full_path = settings.STORAGE_DIR / asset.file_path
     
     # 提取元数据
-    metadata = SpatialService.extract_metadata(full_path)
+    metadata = {}
+    if asset.sub_type == 'NetCDF':
+         try:
+             metadata = NetCDFProcessor.extract_metadata(full_path)
+         except Exception as e:
+             print(f"Extract NetCDF metadata failed: {e}")
+    else:
+        metadata = SpatialService.extract_metadata(full_path)
     
     return {
         "id": asset.id,
@@ -120,8 +211,8 @@ async def identify_geodata(
             GeoAsset.center_x.isnot(None),
             GeoAsset.center_y.isnot(None),
             func.ST_DWithin(
-                func.ST_Cast(func.ST_SetSRID(func.ST_MakePoint(GeoAsset.center_x, GeoAsset.center_y), 4326), 'Geography'),
-                func.ST_Cast(pt_view, 'Geography'),
+                func.geography(func.ST_SetSRID(func.ST_MakePoint(GeoAsset.center_x, GeoAsset.center_y), 4326)),
+                func.geography(pt_view),
                 buffer
             )
         ).limit(10) # 限制返回数量
@@ -155,6 +246,145 @@ async def identify_geodata(
         
     except Exception as e:
         print(f"Error in identify: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/nearby", response_model=GeoDataListResponse)
+async def nearby_geodata(
+    lat: float, 
+    lon: float,
+    radius: float = 1000.0,
+    db: Session = Depends(get_db), 
+    current_user = Depends(get_current_user)
+):
+    """周边分析：查找指定范围内的地质数据，并按距离排序"""
+    try:
+        # 构造查询点 (SRID 4326)
+        pt_view = func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326)
+        
+        # 计算距离表达式
+        pt_asset = func.ST_SetSRID(func.ST_MakePoint(GeoAsset.center_x, GeoAsset.center_y), 4326)
+        distance_expr = func.ST_Distance(
+            func.geography(pt_asset),
+            func.geography(pt_view)
+        )
+        
+        # 查询符合条件的数据
+        query = db.query(GeoAsset, distance_expr.label('distance')).filter(
+            GeoAsset.is_sidecar == False,
+            GeoAsset.center_x.isnot(None),
+            GeoAsset.center_y.isnot(None),
+            func.ST_DWithin(
+                func.geography(pt_asset),
+                func.geography(pt_view),
+                radius
+            )
+        ).order_by(distance_expr).limit(100) # 限制数量
+        
+        results = query.all()
+        data_list = []
+        
+        for asset, dist in results:
+            full_path = settings.STORAGE_DIR / asset.file_path
+            exists = full_path.exists()
+            
+            extent = None
+            if asset.extent_min_x is not None:
+                extent = [asset.extent_min_x, asset.extent_min_y, asset.extent_max_x, asset.extent_max_y]
+                
+            data_list.append(GeoDataItem(
+                id=asset.id,
+                name=asset.name,
+                type=asset.file_type,
+                uploadTime=asset.updated_at.strftime("%Y-%m-%d %H:%M:%S") if asset.updated_at else "",
+                extent=extent,
+                srid=asset.srid,
+                exists=exists,
+                center_x=asset.center_x,
+                center_y=asset.center_y,
+                distance=dist,
+                description=asset.description,
+                source="internal"
+            ))
+            
+        return GeoDataListResponse(data=data_list, total=len(data_list))
+        
+    except Exception as e:
+        print(f"Error in nearby: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/buffer-query", response_model=GeoDataListResponse)
+async def buffer_query(
+    request: dict, # 临时使用 dict，建议定义 Pydantic 模型
+    db: Session = Depends(get_db), 
+    current_user = Depends(get_current_user)
+):
+    """
+    缓冲区查询：查找指定中心点和半径范围内的地质数据
+    接收参数：center_lon (float), center_lat (float), radius_meters (float)
+    """
+    try:
+        center_lon = request.get('center_lon')
+        center_lat = request.get('center_lat')
+        radius_meters = request.get('radius_meters')
+        
+        if center_lon is None or center_lat is None or radius_meters is None:
+             raise HTTPException(status_code=400, detail="Missing required parameters: center_lon, center_lat, radius_meters")
+             
+        # 构造查询点 (SRID 4326)
+        pt_center = func.ST_SetSRID(func.ST_MakePoint(center_lon, center_lat), 4326)
+        
+        # 构造目标点
+        pt_asset = func.ST_SetSRID(func.ST_MakePoint(GeoAsset.center_x, GeoAsset.center_y), 4326)
+        
+        # 计算距离用于排序
+        distance_expr = func.ST_Distance(
+            func.geography(pt_asset),
+            func.geography(pt_center)
+        )
+        
+        # 查询符合条件的数据
+        # 使用 ST_DWithin(geography, geography, distance_meters) 确保以米为单位
+        query = db.query(GeoAsset, distance_expr.label('distance')).filter(
+            GeoAsset.is_sidecar == False,
+            GeoAsset.center_x.isnot(None),
+            GeoAsset.center_y.isnot(None),
+            func.ST_DWithin(
+                func.geography(pt_asset),
+                func.geography(pt_center),
+                radius_meters
+            )
+        ).order_by(distance_expr).limit(100)
+        
+        results = query.all()
+        data_list = []
+        
+        for asset, dist in results:
+            full_path = settings.STORAGE_DIR / asset.file_path
+            exists = full_path.exists()
+            
+            extent = None
+            if asset.extent_min_x is not None:
+                extent = [asset.extent_min_x, asset.extent_min_y, asset.extent_max_x, asset.extent_max_y]
+                
+            data_list.append(GeoDataItem(
+                id=asset.id,
+                name=asset.name,
+                type=asset.file_type,
+                uploadTime=asset.updated_at.strftime("%Y-%m-%d %H:%M:%S") if asset.updated_at else "",
+                extent=extent,
+                srid=asset.srid,
+                exists=exists,
+                center_x=asset.center_x,
+                center_y=asset.center_y,
+                distance=dist,
+                description=asset.description,
+                source="internal"
+            ))
+            
+        return GeoDataListResponse(data=data_list, total=len(data_list))
+        
+    except Exception as e:
+        print(f"Error in buffer query: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/list", response_model=GeoDataListResponse)
@@ -222,8 +452,8 @@ async def search_geodata(
         
         # 计算距离
         distance_expr = func.ST_Distance(
-            func.ST_Cast(func.ST_SetSRID(func.ST_MakePoint(GeoAsset.center_x, GeoAsset.center_y), 4326), 'Geography'),
-            func.ST_Cast(pt_search, 'Geography')
+            func.geography(func.ST_SetSRID(func.ST_MakePoint(GeoAsset.center_x, GeoAsset.center_y), 4326)),
+            func.geography(pt_search)
         )
         
         query = db.query(GeoAsset, distance_expr.label('distance')).filter(
@@ -281,8 +511,8 @@ async def search_geodata(
             
             # 计算距离 (转为 Geography 以获取米单位)
             distance_expr = func.ST_Distance(
-                func.ST_Cast(pt_asset, 'Geography'),
-                func.ST_Cast(pt_view, 'Geography')
+                func.geography(pt_asset),
+                func.geography(pt_view)
             )
             
             # 修改查询以包含距离
@@ -374,7 +604,7 @@ async def search_geodata(
         
     return GeoDataListResponse(data=[], total=0)
 
-@router.post("/upload")
+@router.post("/upload", dependencies=[Depends(role_checker)])
 async def upload_files(
     files: Union[List[UploadFile], UploadFile] = File(...),
     db: Session = Depends(get_db),
@@ -393,6 +623,8 @@ async def upload_files(
         '.shp', '.shx', '.dbf', '.prj', '.cpg', '.sbn', '.sbx', '.geojson', '.json', '.kml', '.gpx',
         # 栅格数据
         '.tif', '.tiff', '.tfw', '.img',
+        # 多维数据
+        '.nc', '.nc4',
         # 表格/文档
         '.csv', '.txt', '.pdf', '.doc', '.docx',
         # 压缩包
@@ -432,6 +664,7 @@ async def upload_files(
         # 3. 分析文件类型并分类处理
         shp_files = [f for f in uploaded_file_paths if f.suffix.lower() == '.shp']
         tif_files = [f for f in uploaded_file_paths if f.suffix.lower() in ['.tif', '.tiff']]
+        nc_files = [f for f in uploaded_file_paths if f.suffix.lower() in ['.nc', '.nc4']]
         zip_files = [f for f in uploaded_file_paths if f.suffix.lower() == '.zip']
         tabular_files = [f for f in uploaded_file_paths if f.suffix.lower() in ['.csv', '.txt']]
         
@@ -640,6 +873,68 @@ async def upload_files(
                 db.rollback()
                 errors.append(f"解析 GeoTIFF {tif_path.name} 失败: {str(e)}")
 
+        # 3.2.1 处理 NetCDF
+        for nc_path in nc_files:
+            try:
+                target_dir = settings.RASTER_DIR / batch_id
+                target_dir.mkdir(parents=True, exist_ok=True)
+                target_nc = target_dir / nc_path.name
+                shutil.move(str(nc_path), str(target_nc))
+                
+                # 提取元数据
+                metadata = NetCDFProcessor.extract_metadata(target_nc)
+                
+                # 获取中心点
+                center_x = 0
+                center_y = 0
+                extent = metadata.get("extent")
+                if extent:
+                    center_x = (extent[0] + extent[2]) / 2
+                    center_y = (extent[1] + extent[3]) / 2
+                
+                asset = GeoAsset(
+                    name=nc_path.stem,
+                    file_path=str(target_nc.relative_to(settings.STORAGE_DIR)),
+                    file_type="栅格", # 或 多维
+                    sub_type="NetCDF",
+                    srid=4326, # 假设 WGS84
+                    center_x=center_x,
+                    center_y=center_y,
+                    extent_min_x=extent[0] if extent else None,
+                    extent_min_y=extent[1] if extent else None,
+                    extent_max_x=extent[2] if extent else None,
+                    extent_max_y=extent[3] if extent else None
+                )
+                db.add(asset)
+                db.commit()
+                db.refresh(asset)
+                
+                if extent:
+                    db.execute(text(f"""
+                        UPDATE geo_assets 
+                        SET extent = ST_SetSRID(ST_MakeEnvelope(:minx, :miny, :maxx, :maxy, 4326), 4326)
+                        WHERE id = :id
+                    """), {
+                        "minx": extent[0],
+                        "miny": extent[1],
+                        "maxx": extent[2],
+                        "maxy": extent[3],
+                        "id": asset.id
+                    })
+                    db.commit()
+                
+                processed_assets.append({
+                    "id": asset.id, 
+                    "name": asset.name, 
+                    "type": "nc",
+                    "center_x": center_x,
+                    "center_y": center_y
+                })
+                
+            except Exception as e:
+                db.rollback()
+                errors.append(f"解析 NetCDF {nc_path.name} 失败: {str(e)}")
+
         # 3.3 处理 ZIP
         if zip_files:
             for zip_path in zip_files:
@@ -691,6 +986,38 @@ async def upload_files(
         if upload_dir.exists():
             shutil.rmtree(upload_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"上传处理过程错误: {str(e)}")
+
+@router.delete("/delete/{id}", dependencies=[Depends(role_checker)])
+async def delete_geodata(
+    id: int, 
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    删除地质数据 (仅管理员)
+    """
+    asset = db.query(GeoAsset).filter(GeoAsset.id == id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="GeoAsset not found")
+        
+    try:
+        # 1. 删除物理文件
+        file_path = settings.STORAGE_DIR / asset.file_path
+        if file_path.exists():
+            # 如果是目录（比如 shapefile 目录），删除目录
+            if file_path.is_dir():
+                shutil.rmtree(file_path)
+            else:
+                file_path.unlink()
+        
+        # 2. 删除数据库记录
+        db.delete(asset)
+        db.commit()
+        
+        return {"message": "Data deleted successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
 
 @router.get("/preview/{id}")
 async def preview_geodata(id: int, db: Session = Depends(get_db)):
@@ -816,3 +1143,32 @@ async def spatial_download(request: SpatialDownloadRequest, db: Session = Depend
     if not result:
         return JSONResponse(content={"message": "No files found in extent"})
     return result
+
+@router.get("/netcdf/{id}/slice")
+async def get_netcdf_slice(
+    id: int, 
+    variable: str,
+    time_index: int = 0,
+    depth_index: int = 0,
+    db: Session = Depends(get_db)
+):
+    """获取 NetCDF 数据切片"""
+    asset = db.query(GeoAsset).filter(GeoAsset.id == id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="GeoAsset not found")
+        
+    file_path = settings.STORAGE_DIR / asset.file_path
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Physical file not found")
+        
+    try:
+        data = await run_in_threadpool(
+            NetCDFProcessor.get_data_slice,
+            file_path,
+            variable,
+            time_index,
+            depth_index
+        )
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get slice: {str(e)}")

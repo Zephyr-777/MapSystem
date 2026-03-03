@@ -5,7 +5,7 @@ import router from '@/router'
 
 export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = ref(false)
-  const user = ref<{ id: number; username: string; email?: string } | null>(null)
+  const user = ref<{ id: number; username: string; email?: string; role?: string } | null>(null)
   const token = ref<string | null>(localStorage.getItem('token'))
 
   // 初始化时检查 token
@@ -67,12 +67,20 @@ export const useAuthStore = defineStore('auth', () => {
     router.push('/login')
   }
 
+  function setRole(role: string) {
+    if (user.value) {
+      user.value = { ...user.value, role };
+      localStorage.setItem('user', JSON.stringify(user.value));
+    }
+  }
+
   return {
     isAuthenticated: computed(() => isAuthenticated.value),
     user: computed(() => user.value),
     token: computed(() => token.value),
     login,
     register,
-    logout
+    logout,
+    setRole
   }
 })

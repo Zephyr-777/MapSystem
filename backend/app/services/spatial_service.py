@@ -257,21 +257,40 @@ class SpatialService:
                     target_path = settings.VECTOR_DIR / filename
                     shutil.move(str(file_path), str(target_path))
                     try:
-                        gdf = ParserService.parse_vector_file(target_path, target_crs="EPSG:4326")
-                        bounds = gdf.total_bounds
-                        extent_min_x = float(bounds[0])
-                        extent_min_y = float(bounds[1])
-                        extent_max_x = float(bounds[2])
-                        extent_max_y = float(bounds[3])
+                        # 尝试使用 fiona 读取更准确的元数据 (SRID)
+                        import fiona
+                        
+                        srid = 4326 # 默认
+                        bbox = None
+                        
+                        try:
+                            with fiona.open(str(target_path)) as src:
+                                bbox = src.bounds
+                                if src.crs and 'init' in src.crs:
+                                    # 尝试解析 epsg:4326 格式
+                                    try:
+                                        srid = int(src.crs['init'].split(':')[1])
+                                    except:
+                                        pass
+                        except Exception as e:
+                            print(f"Fiona 读取 ZIP 内 SHP 失败: {e}")
+                        
+                        if bbox:
+                            extent_min_x, extent_min_y, extent_max_x, extent_max_y = map(float, bbox)
+                        else:
+                            # 回退到 geopandas
+                            gdf = ParserService.parse_vector_file(target_path, target_crs="EPSG:4326")
+                            bounds = gdf.total_bounds
+                            extent_min_x, extent_min_y, extent_max_x, extent_max_y = map(float, bounds)
+                            # 如果用了 geopandas 转换，srid 就是 4326 (因为 target_crs)
+                            # 但如果我们想保持原始 srid，应该不传 target_crs
+                            # 这里为了保险，如果有 srid，我们用 srid；如果没有，我们假设 geopandas 转成了 4326
+                            if srid == 4326: 
+                                srid = 4326
+
                         center_x = (extent_min_x + extent_max_x) / 2
                         center_y = (extent_min_y + extent_max_y) / 2
 
-                        # 先入库记录，再尝试解析内容
-                        # 暂时创建 GeoAsset 记录，如果需要解析内容到 GeologicFeature，那是另一回事
-                        # 这里我们需要先创建 GeoAsset 以便关联 sidecar
-                        # process_and_import_vector 是导入到 GeologicFeature 表，不是 GeoAsset
-                        # 我们需要一个新的方法或者手动创建 GeoAsset
-                        
                         # 创建 GeoAsset 记录
                         main_asset = GeoAsset(
                             name=filename,
@@ -279,7 +298,7 @@ class SpatialService:
                             file_type="矢量",
                             sub_type="矢量/SHP",
                             is_sidecar=False,
-                            srid=4326,
+                            srid=srid,
                             extent_min_x=extent_min_x,
                             extent_min_y=extent_min_y,
                             extent_max_x=extent_max_x,
@@ -291,18 +310,33 @@ class SpatialService:
                         db.commit()
                         db.refresh(main_asset)
                         
-                        # 尝试解析内容到 GeologicFeature (可选，视需求而定)
-                        try:
-                            # 注意：解析内容需要 sidecar 文件 (.shx, .dbf)
-                            # 此时 sidecar 可能还没移动过来，所以这里可能需要延迟处理
-                            # 或者我们假设 fiona 需要 sidecar 在同一目录
-                            # 所以我们只能在所有文件移动后再解析内容
-                            pass 
-                        except Exception as e:
-                            print(f"矢量内容解析失败: {e}")
-                            
+                        # 更新 Geometry 字段
+                        db.execute(text(f"""
+                            UPDATE geo_assets 
+                            SET extent = ST_SetSRID(ST_MakeEnvelope(:minx, :miny, :maxx, :maxy, :srid), :srid)
+                            WHERE id = :id
+                        """), {
+                            "minx": extent_min_x,
+                            "miny": extent_min_y,
+                            "maxx": extent_max_x,
+                            "maxy": extent_max_y,
+                            "srid": srid,
+                            "id": main_asset.id
+                        })
+                        
+                        # 如果 srid != 4326，再转换一次到 4326
+                        if srid != 4326:
+                             db.execute(text(f"""
+                                UPDATE geo_assets 
+                                SET extent = ST_Transform(extent, 4326)
+                                WHERE id = :id
+                            """), {"id": main_asset.id})
+                        
+                        db.commit()
+                        
                         results["vector_imported"] += 1
                     except Exception as e:
+                        db.rollback()
                         print(f"ZIP内矢量记录创建失败 {filename}: {e}")
 
                 # 1.3 数据库 (.mdb, .db)

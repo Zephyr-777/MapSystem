@@ -39,6 +39,8 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+from fastapi import Header, HTTPException, status
+
 def verify_token(token: str) -> Optional[str]:
     """验证令牌并返回用户名"""
     try:
@@ -49,3 +51,16 @@ def verify_token(token: str) -> Optional[str]:
         return username
     except JWTError:
         return None
+
+def role_checker(x_user_role: str = Header(default="guest", alias="X-User-Role")):
+    """
+    检查请求头中的 X-User-Role 是否为 admin
+    注意：在实际生产中，角色应该从 JWT Token 或数据库中获取，而不是完全信任客户端 Header。
+    这里为了演示方便，遵循用户指令使用 Header 检查。
+    """
+    if x_user_role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Operation not permitted. Admin role required."
+        )
+    return x_user_role

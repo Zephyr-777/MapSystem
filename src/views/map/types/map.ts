@@ -11,16 +11,15 @@ export interface GeoDataItem {
   lithology?: string;
   description?: string;
   reports?: Array<{ title: string; url: string }>;
-}
-
-export interface LayerConfigItem {
-  visible: boolean;
-  opacity: number;
-  name: string;
+  metadata?: any; // NetCDF or other metadata
 }
 
 export interface LayerConfig {
-  [key: string]: LayerConfigItem;
+  [key: string]: {
+    visible: boolean;
+    opacity: number;
+    name: string;
+  };
 }
 
 export interface MapOptions {

@@ -1,8 +1,11 @@
 import { ref, onUnmounted } from 'vue';
-import { DragBox } from 'ol/interaction';
+import { DragBox, Draw } from 'ol/interaction';
 import { platformModifierKeyOnly } from 'ol/events/condition';
 import Overlay from 'ol/Overlay';
 import Point from 'ol/geom/Point';
+import VectorSource from 'ol/source/Vector';
+import VectorLayer from 'ol/layer/Vector';
+import { Style, Stroke, Fill } from 'ol/style';
 import useMapCore from './useMapCore';
 import type { GeoDataItem } from '@/views/map/types/map';
 
@@ -14,7 +17,81 @@ export default function useMapInteractions() {
   const selectedItems = ref<GeoDataItem[]>([]);
   
   let dragBoxInteraction: DragBox | null = null;
+  let drawInteraction: Draw | null = null;
   let tooltipOverlay: Overlay | null = null;
+  let drawLayer: VectorLayer<VectorSource> | null = null;
+
+  const initDrawLayer = () => {
+    const map = getMap();
+    if (!map || drawLayer) return;
+
+    const source = new VectorSource();
+    drawLayer = new VectorLayer({
+      source: source,
+      style: new Style({
+        fill: new Fill({
+          color: 'rgba(255, 255, 255, 0.2)',
+        }),
+        stroke: new Stroke({
+          color: '#ffcc33',
+          width: 2,
+        }),
+      }),
+      zIndex: 1000,
+    });
+    map.addLayer(drawLayer);
+  };
+
+  const startDrawing = (type: 'Circle' | 'Polygon' | 'Box', onDrawEnd: (geometry: any) => void) => {
+    const map = getMap();
+    if (!map) return;
+    
+    stopDrawing(); // Clear existing draw
+    initDrawLayer();
+
+    if (type === 'Box') {
+       // Special case for Box if needed, but usually DragBox handles this.
+       // Here we implement Circle for buffer.
+       return;
+    }
+
+    const source = drawLayer?.getSource();
+    if (!source) return;
+
+    drawInteraction = new Draw({
+      source: source,
+      type: type as any,
+    });
+
+    drawInteraction.on('drawend', (evt) => {
+      const geometry = evt.feature.getGeometry();
+      onDrawEnd(geometry);
+      // Optional: stop drawing after one shape?
+      // stopDrawing(); 
+      // Or keep drawing? Usually for buffer tool we want one circle then maybe stop or allow redraw.
+      // Let's clear previous features to allow only one buffer zone at a time
+      source.clear(); 
+    });
+
+    map.addInteraction(drawInteraction);
+  };
+
+  const stopDrawing = () => {
+    const map = getMap();
+    if (!map) return;
+
+    if (drawInteraction) {
+      map.removeInteraction(drawInteraction);
+      drawInteraction = null;
+    }
+    
+    if (drawLayer) {
+        drawLayer.getSource()?.clear();
+        // map.removeLayer(drawLayer); // Optional: keep layer or remove
+        // drawLayer = null;
+    }
+  };
+
 
   const initInteractions = (
     onFeatureSelect: (feature: any) => void,
@@ -173,10 +250,20 @@ export default function useMapInteractions() {
           map.removeInteraction(dragBoxInteraction);
           dragBoxInteraction = null;
       }
+
+      if (drawInteraction) {
+          map.removeInteraction(drawInteraction);
+          drawInteraction = null;
+      }
       
       if (tooltipOverlay) {
           map.removeOverlay(tooltipOverlay);
           tooltipOverlay = null;
+      }
+
+      if (drawLayer) {
+          map.removeLayer(drawLayer);
+          drawLayer = null;
       }
   };
 
@@ -193,6 +280,8 @@ export default function useMapInteractions() {
       clearSelection,
       initTooltip,
       flyTo,
-      removeInteractions
+      removeInteractions,
+      startDrawing,
+      stopDrawing
   };
 }

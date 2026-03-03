@@ -87,9 +87,32 @@ export const geoDataApi = {
     }) as unknown as Promise<GeoDataListResponse>
   },
 
+  // 周边分析
+  nearby: (lon: number, lat: number, radius: number = 1000) => {
+    return api.get<GeoDataListResponse>('/api/geodata/nearby', {
+      params: { lon, lat, radius }
+    }) as unknown as Promise<GeoDataListResponse>
+  },
+
+  // 缓冲区查询
+  bufferQuery: (center_lon: number, center_lat: number, radius_meters: number) => {
+    return api.post<GeoDataListResponse>('/api/geodata/buffer-query', {
+      center_lon, 
+      center_lat, 
+      radius_meters
+    }) as unknown as Promise<GeoDataListResponse>
+  },
+
   // 获取地质数据详情
   getDetail: (id: number) => {
     return api.get<any>(`/api/geodata/detail/${id}`) as unknown as Promise<any>
+  },
+
+  // 获取 NetCDF 切片数据
+  getNetCDFSlice: (id: number, variable: string, time_index: number = 0, depth_index: number = 0) => {
+    return api.get<any>(`/api/geodata/netcdf/${id}/slice`, {
+      params: { variable, time_index, depth_index }
+    }) as unknown as Promise<any>
   },
 
   // 下载地质数据文件
@@ -109,9 +132,14 @@ export const geoDataApi = {
     return response.data
   },
 
-  // 获取统计数据
+  // 获取统计数据 (旧接口)
   getStats: () => {
     return api.get<any>('/api/geodata/stats') as unknown as Promise<any>
+  },
+
+  // 获取统计摘要 (新接口)
+  getSummary: () => {
+    return api.get<any>('/api/geodata/summary') as unknown as Promise<any>
   },
 
   // 上传地质数据文件

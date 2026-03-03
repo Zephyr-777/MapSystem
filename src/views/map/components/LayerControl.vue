@@ -48,13 +48,17 @@ defineEmits<{
 <style scoped>
 .layer-control-panel {
   position: absolute;
-  top: 80px;
-  right: 80px;
+  bottom: 90px;
+  left: 50%;
+  transform: translateX(-50%);
   width: 280px;
-  background: #fff;
-  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 12px;
   z-index: 100;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.5);
 }
 
 .panel-header {

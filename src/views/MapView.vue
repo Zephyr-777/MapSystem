@@ -2,12 +2,24 @@
   <div class="map-view-container">
     <ErrorBoundary>
       <MapContainer ref="mapContainerRef" :map-instance="map">
+        <!-- Swipe Control -->
+        <div v-if="isSwipeActive" class="swipe-control-container">
+            <input 
+              type="range" 
+              min="0" 
+              max="100" 
+              v-model="swipeValue" 
+              class="swipe-slider"
+              @input="map?.render()"
+            />
+        </div>
+
         <!-- Mouse Tooltip Overlay Content -->
         <div ref="mouseTooltipRef" class="mouse-tooltip" v-show="tooltipContent">
           {{ tooltipContent }}
         </div>
         
-        <!-- Result Popover Overlay -->
+        <!-- Result Popover Overlay (Only for non-feature clicks if needed, or simple POIs) -->
         <div ref="popupRef" class="map-popup-overlay">
           <div v-if="popupInfo" class="popup-content glass-panel">
             <div class="popup-header">
@@ -37,20 +49,57 @@
           </div>
         </div>
 
-        <!-- Zoom Control -->
-        <div class="map-zoom-control card-shadow">
-          <el-icon class="zoom-btn" @click="zoomIn"><Plus /></el-icon>
-          <el-slider 
-            v-model="zoomLevel" 
-            vertical 
-            :min="3" 
-            :max="18" 
-            height="100px"
-            :show-tooltip="false"
-            @input="handleZoomChange"
-          />
-          <el-icon class="zoom-btn" @click="zoomOut"><Minus /></el-icon>
+        <!-- Bottom Right Controls: Zoom & Location -->
+        <div class="bottom-right-controls">
+          <el-tooltip content="定位" placement="left">
+            <button 
+              class="nav-btn"
+              :class="{ 'loading': locating }"
+              @click="handleLocation" 
+            >
+              <el-icon :class="{ 'is-loading': locating }"><Location /></el-icon>
+            </button>
+          </el-tooltip>
+
+          <div class="map-zoom-control-vertical">
+            <el-icon class="zoom-btn" @click="zoomIn"><Plus /></el-icon>
+            <el-slider 
+              v-model="zoomLevel" 
+              vertical 
+              :min="3" 
+              :max="18" 
+              height="100px"
+              :show-tooltip="false"
+              @input="handleZoomChange"
+            />
+            <el-icon class="zoom-btn" @click="zoomOut"><Minus /></el-icon>
+          </div>
+
+          <!-- 退出登录按钮 -->
+          <el-tooltip content="退出登录" placement="left">
+            <button 
+              class="nav-btn logout-btn"
+              @click="handleLogout" 
+            >
+              <el-icon><SwitchButton /></el-icon>
+            </button>
+          </el-tooltip>
         </div>
+
+        <!-- Bottom Dock -->
+        <BottomDock 
+          :active-tool="activeTool"
+          @home="handleHome"
+          @toggle-layers="toggleLayers"
+          @toggle-measure="toggleMeasureTool"
+          @toggle-selection="toggleSelectionTool"
+          @toggle-buffer="toggleBufferTool"
+          @toggle-identify="toggleIdentifyTool"
+          @open-gallery="$router.push('/gallery')"
+          @share-view="handleShareView"
+          @upload="showUploadDialog = true"
+        />
+
       </MapContainer>
 
       <div v-if="!mapReady && !initError" class="loading-overlay">
@@ -68,11 +117,13 @@
       </div>
 
       <div v-if="mapReady">
-        <SearchBox 
-          :fetch-suggestions="handleSearchSuggestions"
-          @select-result="handleSelectResult"
-          @upload="showUploadDialog = true"
-        />
+        <div class="top-search-container">
+          <SearchBox 
+            :fetch-suggestions="handleSearchSuggestions"
+            @select-result="handleSelectResult"
+            @upload="showUploadDialog = true"
+          />
+        </div>
 
         <Transition name="fade-slide">
           <LayerControl 
@@ -85,7 +136,7 @@
           />
         </Transition>
 
-        <Transition name="fade-slide">
+        <Transition name="slide-right">
           <InfoPanel 
             v-if="sidePanelVisible"
             :visible="sidePanelVisible"
@@ -96,87 +147,14 @@
             @close="closeSidePanel"
             @download="handleDownload"
             @locate="locateItem"
+            @visualize-nc="handleVisualizeNetCDF"
           />
         </Transition>
 
         <Transition name="fade-slide">
-          <StatsPanel 
-            v-if="showAttributeDashboard"
-          />
+          <StatsPanel v-if="showAttributeDashboard" />
         </Transition>
         
-        <div class="floating-toolbar">
-           <el-tooltip :content="currentBaseMap === 'vector' ? '切换卫星影像' : '切换电子地图'" placement="left">
-              <button 
-                class="toolbar-btn"
-                :class="{ 'active': currentBaseMap === 'satellite' }"
-                @click="toggleBaseMap" 
-              >
-                <el-icon><MapLocation /></el-icon>
-              </button>
-           </el-tooltip>
-           
-           <el-tooltip content="图层管理" placement="left">
-              <button 
-                class="toolbar-btn"
-                :class="{ 'active': showLayerPanel }"
-                @click="showLayerPanel = !showLayerPanel" 
-              >
-                <el-icon><Files /></el-icon>
-              </button>
-           </el-tooltip>
-           
-           <el-tooltip content="数据统计" placement="left">
-              <button 
-                class="toolbar-btn"
-                :class="{ 'active': showAttributeDashboard }"
-                @click="showAttributeDashboard = !showAttributeDashboard" 
-              >
-                <el-icon><PieChart /></el-icon>
-              </button>
-           </el-tooltip>
-           
-           <el-tooltip content="框选工具" placement="left">
-              <button 
-                class="toolbar-btn"
-                :class="{ 'active': isDragBoxActive }"
-                @click="toggleDragBox" 
-              >
-                <el-icon><Crop /></el-icon>
-              </button>
-           </el-tooltip>
-           
-           <el-tooltip content="定位" placement="left">
-              <button 
-                class="toolbar-btn"
-                :class="{ 'loading': locating }"
-                @click="handleLocation" 
-              >
-                <el-icon :class="{ 'is-loading': locating }"><Location /></el-icon>
-              </button>
-           </el-tooltip>
-           
-           <el-tooltip content="清除选择" placement="left">
-              <button 
-                class="toolbar-btn"
-                :disabled="!selectedExtent"
-                @click="clearSelection" 
-              >
-                <el-icon><Delete /></el-icon>
-              </button>
-           </el-tooltip>
-           
-           <div class="divider"></div>
-           
-           <el-tooltip content="退出登录" placement="left">
-              <button 
-                class="toolbar-btn danger"
-                @click="handleLogout" 
-              >
-                <el-icon><SwitchButton /></el-icon>
-              </button>
-           </el-tooltip>
-        </div>
       </div>
       
       <!-- Upload Dialog -->
@@ -190,11 +168,11 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, shallowRef, nextTick, computed } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { geoDataApi, type GeoDataItem } from '@/api/geodata';
-import { ElMessage } from 'element-plus';
-import { MapLocation, Files, Crop, Location, Delete, SwitchButton, Loading, Plus, Minus, RefreshRight, PieChart, Close, LocationInformation } from '@element-plus/icons-vue';
+import { ElMessage, ElNotification, ElMessageBox } from 'element-plus';
+import { Location, Loading, Plus, Minus, RefreshRight, Close, LocationInformation, SwitchButton } from '@element-plus/icons-vue';
 import type Map from 'ol/Map';
 import type { LayerConfig } from '@/views/map/types/map';
 import useMapCore from '@/composables/useMapCore';
@@ -204,30 +182,39 @@ import VectorSource from 'ol/source/Vector';
 import Feature from 'ol/Feature';
 import Point from 'ol/geom/Point';
 import { fromLonLat, toLonLat } from 'ol/proj';
-import { Style, Fill, Stroke, Circle as CircleStyle } from 'ol/style';
+import { Style, Fill, Stroke, Circle as CircleStyle, RegularShape } from 'ol/style';
 import VectorLayer from 'ol/layer/Vector';
 import Overlay from 'ol/Overlay';
+import { Circle as CircleGeom } from 'ol/geom';
+import { getRenderPixel } from 'ol/render';
+import TileLayer from 'ol/layer/Tile';
+import HeatmapLayer from 'ol/layer/Heatmap';
 
 // Components
 import ErrorBoundary from '@/components/ErrorBoundary.vue';
 import MapContainer from '@/views/map/components/MapContainer.vue';
 import SearchBox from '@/views/map/components/SearchBox.vue';
+import BottomDock from '@/components/layout/BottomDock.vue';
 import LayerControl from '@/views/map/components/LayerControl.vue';
 import InfoPanel from '@/views/map/components/InfoPanel.vue';
 import StatsPanel from '@/views/map/components/StatsPanel.vue';
 import UploadDialog from '@/views/map/components/UploadDialog.vue';
 
+import { getDistance } from 'ol/sphere';
+
 // Composables
 const { initMap, mapReady } = useMapCore();
-const { addOSMLayer, addEsriSatelliteLayer, addTDTLayer, addNavigationLayer, addClusterLayer, removeLayer, activeLayerKeys, clearLayers } = useMapLayers();
-const { initInteractions, toggleDragBox, isDragBoxActive, selectedExtent, clearSelection: clearInteractions, initTooltip, flyTo, removeInteractions, selectedItems } = useMapInteractions();
+const { addOSMLayer, addEsriSatelliteLayer, addTDTLayer, addNavigationLayer, addClusterLayer, addHeatmapLayer, removeLayer, activeLayerKeys, clearLayers, layers } = useMapLayers();
+const { initInteractions, toggleDragBox, isDragBoxActive, selectedExtent, clearSelection: clearInteractions, initTooltip, flyTo, removeInteractions, selectedItems, startDrawing, stopDrawing } = useMapInteractions();
 
 const router = useRouter();
+const route = useRoute();
 const authStore = useAuthStore();
 const map = shallowRef<Map | null>(null);
 const mapContainerRef = ref<any>(null);
 
 // State
+const activeTool = ref<string>('');
 const initError = ref(false);
 const errorMessage = ref('');
 const showLayerPanel = ref(false);
@@ -236,7 +223,174 @@ const showAttributeDashboard = ref(true);
 const currentFeature = ref<GeoDataItem | null>(null);
 const showUploadDialog = ref(false);
 const locating = ref(false);
+const isNearbyActive = ref(false);
+const isSwipeActive = ref(false);
+const swipeValue = ref(50);
 const mouseTooltipRef = ref<HTMLElement | null>(null);
+
+// Tool toggle handlers
+const toggleLayers = () => {
+  activeTool.value = activeTool.value === 'layers' ? '' : 'layers';
+  showLayerPanel.value = !showLayerPanel.value;
+};
+
+const toggleMeasureTool = () => {
+  activeTool.value = activeTool.value === 'measure' ? '' : 'measure';
+  ElMessage.info('测量工具开发中');
+};
+
+const toggleSelectionTool = () => {
+  if (activeTool.value === 'selection') {
+    activeTool.value = '';
+    if (isDragBoxActive.value) toggleDragBox();
+  } else {
+    activeTool.value = 'selection';
+    if (!isDragBoxActive.value) toggleDragBox();
+    isNearbyActive.value = false;
+  }
+};
+
+const toggleBufferTool = () => {
+  if (activeTool.value === 'buffer') {
+    activeTool.value = '';
+    isNearbyActive.value = false;
+    stopDrawing();
+    bufferSource.clear();
+    selectedItems.value = [];
+    sidePanelVisible.value = false;
+  } else {
+    activeTool.value = 'buffer';
+    isNearbyActive.value = true;
+    if (isDragBoxActive.value) toggleDragBox();
+    
+    ElMessage.info('请在地图上拖拽绘制圆形区域进行分析');
+    startDrawing('Circle', handleBufferDraw);
+  }
+};
+
+const handleBufferDraw = async (geometry: any) => {
+    // geometry is Circle (in Web Mercator)
+    const center = geometry.getCenter();
+    const radius = geometry.getRadius(); // This is in projection units (meters-ish)
+    
+    // Convert center to LonLat
+    const centerLonLat = toLonLat(center);
+    
+    // Calculate accurate radius in meters (Geodesic)
+    // Get a point on the circumference
+    // For Circle geometry in OL, it's defined by center and radius.
+    // We can assume flat radius for small areas, but for accuracy:
+    // Create a point at [center[0] + radius, center[1]] and measure distance?
+    // Or just use the projection radius if the projection is meters (Web Mercator is meters but distorted).
+    // Distortion factor at latitude phi is 1 / cos(phi).
+    // So real distance = map distance * cos(phi).
+    const lat = centerLonLat[1];
+    const realRadius = radius * Math.cos(lat * Math.PI / 180);
+    
+    console.log(`Buffer Analysis: Center=[${centerLonLat}], Radius=${realRadius}m`);
+    
+    ElMessage.info(`正在分析周边 ${realRadius.toFixed(0)} 米范围数据...`);
+    
+    // Clear previous visual buffer (drawn by interaction)
+    // The interaction draws on a temp layer. We might want to keep it or add to our bufferLayer.
+    // Let's add it to our bufferLayer so we can control it.
+    bufferSource.clear();
+    const feature = new Feature(geometry);
+    bufferSource.addFeature(feature);
+    
+    try {
+        const res = await geoDataApi.bufferQuery(centerLonLat[0], centerLonLat[1], realRadius);
+        const data = Array.isArray(res) ? res : (res as any).data || [];
+        
+        if (data.length > 0) {
+            if (data.length === 1) {
+                currentFeature.value = data[0];
+                selectedItems.value = data;
+            } else {
+                currentFeature.value = null;
+                selectedItems.value = data;
+            }
+            sidePanelVisible.value = true;
+            // Highlight results
+            highlightSource.clear();
+            data.forEach((item: GeoDataItem) => {
+                if (item.center_x && item.center_y) {
+                    const c = toMapCoords([item.center_x, item.center_y], item.srid);
+                    const f = new Feature(new Point(c));
+                    highlightSource.addFeature(f);
+                }
+            });
+            ElMessage.success(`发现 ${data.length} 个地质点位`);
+        } else {
+            ElMessage.info('缓冲区内无数据');
+            selectedItems.value = [];
+        }
+    } catch (e) {
+        console.error(e);
+        ElMessage.error('缓冲区查询失败');
+    }
+};
+
+const toggleIdentifyTool = () => {
+  if (activeTool.value === 'identify') {
+    activeTool.value = '';
+  } else {
+    activeTool.value = 'identify';
+    isNearbyActive.value = false;
+    if (isDragBoxActive.value) toggleDragBox();
+    ElMessage.success('已开启属性识别，点击地图查看详情');
+  }
+};
+
+const handleHome = () => {
+  if (map.value) {
+    map.value.getView().animate({
+      center: fromLonLat([116.4074, 39.9042]),
+      zoom: 10,
+      duration: 1000
+    });
+  }
+};
+
+const handleShareView = async () => {
+  if (!map.value) return;
+  
+  const view = map.value.getView();
+  const center = view.getCenter();
+  const zoom = view.getZoom();
+  
+  if (center && zoom) {
+    const lonLat = toLonLat(center);
+    // 保留更多小数位以确保精度
+    const lon = lonLat[0].toFixed(6);
+    const lat = lonLat[1].toFixed(6);
+    const z = zoom.toFixed(2);
+    
+    // 构建包含当前视角的 URL
+    const url = `${window.location.origin}${window.location.pathname}?x=${lon}&y=${lat}&z=${z}`;
+    
+    try {
+      await navigator.clipboard.writeText(url);
+      ElNotification({
+        title: '分享成功',
+        message: '视角链接已复制到剪贴板',
+        type: 'success',
+        duration: 3000,
+        offset: 80,
+      });
+    } catch (err) {
+      console.error('Failed to copy: ', err);
+      ElNotification({
+        title: '复制失败',
+        message: '请手动复制浏览器地址栏链接',
+        type: 'error',
+        duration: 3000,
+        offset: 80,
+      });
+    }
+  }
+};
+
 const popupRef = ref<HTMLElement | null>(null);
 const tooltipContent = ref('');
 const currentBaseMap = ref<'vector' | 'satellite'>('vector');
@@ -273,6 +427,7 @@ const handleDetail = (info: any) => {
 };
 
 const sidePanelTitle = computed(() => {
+  if (isNearbyActive.value) return '周边分析结果';
   if (selectedItems.value.length > 1) return '批量操作';
   return currentFeature.value?.name || '详细信息';
 });
@@ -289,6 +444,23 @@ const highlightLayer = new VectorLayer({
       stroke: new Stroke({ color: '#FF0000', width: 2 })
     }),
     zIndex: Infinity
+  })
+});
+
+// Buffer Layer for Nearby Analysis
+const bufferSource = new VectorSource();
+const bufferLayer = new VectorLayer({
+  source: bufferSource,
+  zIndex: 999,
+  style: new Style({
+    fill: new Fill({
+      color: 'rgba(64, 158, 255, 0.2)'
+    }),
+    stroke: new Stroke({
+      color: '#409EFF',
+      width: 2,
+      lineDash: [10, 10]
+    })
   })
 });
 
@@ -321,6 +493,146 @@ const handleRetry = () => {
   window.location.reload();
 };
 
+const handleLogout = () => {
+  ElMessageBox.confirm(
+    '确定要退出登录吗？退出后将清除所有本地缓存并跳转至登录页。',
+    '退出确认',
+    {
+      confirmButtonText: '确认退出',
+      cancelButtonText: '取消',
+      type: 'warning',
+      customClass: 'logout-confirm-box', // 可自定义样式
+    }
+  )
+    .then(() => {
+      try {
+        authStore.logout();
+        ElMessage.success('已安全退出登录');
+      } catch (error) {
+        console.error('Logout error:', error);
+        ElMessage.error('退出过程发生异常，正在强制跳转');
+        // 强制清理
+        localStorage.clear();
+        router.push('/login');
+      }
+    })
+    .catch(() => {
+      // User cancelled
+    });
+};
+
+const toggleNearby = () => {
+  if (isSwipeActive.value) {
+      ElMessage.warning('请先关闭卷帘对比模式');
+      return;
+  }
+  isNearbyActive.value = !isNearbyActive.value;
+  if (!isNearbyActive.value) {
+    bufferSource.clear();
+    selectedItems.value = [];
+    sidePanelVisible.value = false;
+  } else {
+    ElMessage.info('开启周边分析模式：请点击地图查看周边数据');
+  }
+};
+
+const toggleSwipe = () => {
+    if (isNearbyActive.value) {
+        ElMessage.warning('请先关闭周边分析模式');
+        return;
+    }
+    
+    isSwipeActive.value = !isSwipeActive.value;
+    
+    if (isSwipeActive.value) {
+        ElMessage.info('开启卷帘模式：左侧卫星影像，右侧矢量地图');
+        enableSwipe();
+    } else {
+        disableSwipe();
+    }
+};
+
+const enableSwipe = () => {
+    // 1. Ensure both layers are present
+    // Left: Satellite (Bottom), Right: Vector (Top)
+    
+    // Reset layers first to be clean
+    // Actually we can just add them if missing
+    addTDTLayer('img'); // Satellite
+    addTDTLayer('cia'); // Labels
+    addTDTLayer('vec'); // Vector
+    addTDTLayer('cva'); // Labels
+    
+    // 2. Set Visibility and Z-Index
+    // We want Vector on TOP to clip it
+    const vecLayer = layers.value.find(l => l.get('id') === 'tdt-vec');
+    const cvaLayer = layers.value.find(l => l.get('id') === 'tdt-cva');
+    const imgLayer = layers.value.find(l => l.get('id') === 'tdt-img');
+    const ciaLayer = layers.value.find(l => l.get('id') === 'tdt-cia');
+    
+    if (imgLayer) { imgLayer.setVisible(true); imgLayer.setZIndex(0); }
+    if (ciaLayer) { ciaLayer.setVisible(true); ciaLayer.setZIndex(1); }
+    
+    // Vector layers on top, to be clipped
+    if (vecLayer) { 
+        vecLayer.setVisible(true); 
+        vecLayer.setZIndex(10); 
+        vecLayer.on('prerender' as any, swipePrerender);
+        vecLayer.on('postrender' as any, swipePostrender);
+    }
+    if (cvaLayer) { 
+        cvaLayer.setVisible(true); 
+        cvaLayer.setZIndex(11); 
+        cvaLayer.on('prerender' as any, swipePrerender);
+        cvaLayer.on('postrender' as any, swipePostrender);
+    }
+    
+    map.value?.render();
+};
+
+const disableSwipe = () => {
+    // Remove listeners
+    const vecLayer = layers.value.find(l => l.get('id') === 'tdt-vec');
+    const cvaLayer = layers.value.find(l => l.get('id') === 'tdt-cva');
+    
+    if (vecLayer) {
+        vecLayer.un('prerender' as any, swipePrerender);
+        vecLayer.un('postrender' as any, swipePostrender);
+    }
+    if (cvaLayer) {
+        cvaLayer.un('prerender' as any, swipePrerender);
+        cvaLayer.un('postrender' as any, swipePostrender);
+    }
+    
+    // Restore base map state
+    updateBaseMapLayers();
+    map.value?.render();
+};
+
+const swipePrerender = (event: any) => {
+    const ctx = event.context;
+    const mapSize = map.value?.getSize();
+    if (!mapSize) return;
+    
+    const width = mapSize[0] * (swipeValue.value / 100);
+    // Calculate pixel ratio for retina displays
+    const pixelRatio = event.frameState.pixelRatio;
+    
+    ctx.save();
+    ctx.beginPath();
+    // Clip the right side (Vector)
+    // Rect: x, y, w, h
+    // We want to show Vector only on the RIGHT of the slider
+    // So clip rectangle starts at width and goes to end
+    ctx.rect(width * pixelRatio, 0, (mapSize[0] - width) * pixelRatio, mapSize[1] * pixelRatio);
+    ctx.clip();
+};
+
+const swipePostrender = (event: any) => {
+    const ctx = event.context;
+    ctx.restore();
+};
+
 const handleUploadSuccess = async (asset: any) => {
     // Reload data
     await loadGeoData(geoPointSource);
@@ -334,6 +646,62 @@ const handleUploadSuccess = async (asset: any) => {
     }
 };
 
+
+const handleVisualizeNetCDF = (data: any) => {
+    // 1. Remove existing heatmap layer
+    const existing = layers.value.find(l => l.get('id') === 'nc-heatmap');
+    if (existing) {
+        map.value?.removeLayer(existing);
+        layers.value = layers.value.filter(l => l !== existing);
+    }
+    
+    if (!data || !data.lons || !data.lats || !data.values) {
+        ElMessage.warning('数据格式无效');
+        return;
+    }
+    
+    // 2. Create Vector Source with Points
+    const source = new VectorSource();
+    const features: Feature[] = [];
+    
+    const lons = data.lons;
+    const lats = data.lats;
+    const values = data.values;
+    const minVal = data.min;
+    const maxVal = data.max;
+    const range = maxVal - minVal;
+    
+    for (let i = 0; i < lats.length; i++) {
+        for (let j = 0; j < lons.length; j++) {
+            const val = values[i][j];
+            if (val !== null && val !== undefined) {
+                const lon = lons[j];
+                const lat = lats[i];
+                
+                const coords = toMapCoords([lon, lat], 4326);
+                const feature = new Feature(new Point(coords));
+                
+                // Normalize value 0-1 for heatmap weight
+                const weight = range === 0 ? 0.5 : (val - minVal) / range;
+                feature.set('value', weight);
+                feature.set('rawValue', val);
+                
+                features.push(feature);
+            }
+        }
+    }
+    
+    source.addFeatures(features);
+    
+    // 3. Add Heatmap Layer
+    addHeatmapLayer(source, 'nc-heatmap', 20, 10);
+    
+    // 4. Adjust View
+    const extent = source.getExtent();
+    map.value?.getView().fit(extent, { padding: [50, 50, 50, 50], duration: 1000 });
+    
+    ElMessage.success(`已渲染 ${data.variable} 热力图`);
+};
 
 // Init Map
 onMounted(async () => {
@@ -385,16 +753,59 @@ onMounted(async () => {
           updateBaseMapLayers();
 
           // Mock Data Layer (Cluster)
-          addClusterLayer(geoPointSource, 60);
+          addClusterLayer(geoPointSource, 60, 'boreholes');
 
           // Load Data
           console.log('Loading geo data...');
           await loadGeoData(geoPointSource);
 
+          // Check Route Query for FlyTo or Initial View
+          // Priority: 1. ID/Name (Gallery) 2. Lon/Lat/Z (Share)
+          if (route.query.lat && route.query.lon) {
+              const lat = parseFloat(route.query.lat as string);
+              const lon = parseFloat(route.query.lon as string);
+              // Support both 'zoom' (gallery) and 'z' (share)
+              const zoomParam = route.query.zoom || route.query.z;
+              const zoom = zoomParam ? parseFloat(zoomParam as string) : 14;
+              
+              if (!isNaN(lat) && !isNaN(lon)) {
+                  console.log(`Auto positioning to query location: ${lon}, ${lat}, z=${zoom}`);
+                  const coords = toMapCoords([lon, lat], 4326); // Assume query is WGS84
+                  
+                  // Delay slightly to ensure map is fully rendered
+                  setTimeout(() => {
+                      if (route.query.id) {
+                          flyTo(coords, zoom);
+                          const name = (route.query.name as string) || '目标位置';
+                          setNavigationMarker(coords, name, true);
+                          
+                          const id = parseInt(route.query.id as string);
+                          const feature = geoPointSource.getFeatures().find(f => f.get('id') === id);
+                          if (feature) {
+                              const props = feature.getProperties();
+                              currentFeature.value = props as GeoDataItem;
+                              sidePanelVisible.value = true;
+                              
+                              highlightSource.clear();
+                              const clone = feature.clone();
+                              highlightSource.addFeature(clone);
+                          }
+                          ElMessage.success(`已定位到: ${name}`);
+                      } else {
+                          // Share view logic: Direct setCenter for instant restore
+                          mapInstance.getView().setCenter(coords);
+                          mapInstance.getView().setZoom(zoom);
+                          ElMessage.success('已恢复分享视图');
+                      }
+                  }, 500);
+              }
+          }
+
           // Init Interactions
           console.log('Initializing interactions...');
           if (map.value) {
             map.value.addLayer(highlightLayer);
+            map.value.addLayer(bufferLayer);
           }
 
           initInteractions(
@@ -406,6 +817,8 @@ onMounted(async () => {
             },
             (extent) => {
                 // Handle DragBox Selection
+                if (isNearbyActive.value) return;
+
                 console.log('Box Selection Extent:', extent);
                 
                 highlightSource.clear();
@@ -443,7 +856,16 @@ onMounted(async () => {
                 });
 
                 if (selected.length > 0) {
-                    selectedItems.value = selected;
+                    // Update state correctly for InfoPanel logic
+                    if (selected.length === 1) {
+                        // Single feature selected
+                        currentFeature.value = selected[0];
+                        selectedItems.value = selected; // InfoPanel might ignore this due to v-if, but good to keep
+                    } else {
+                        // Multi selection
+                        currentFeature.value = null;
+                        selectedItems.value = selected;
+                    }
                     sidePanelVisible.value = true;
                 } else {
                     ElMessage.info('该区域内未找到点位');
@@ -451,14 +873,23 @@ onMounted(async () => {
             },
             () => {
                 // Blank Click Handler
-                currentFeature.value = null;
-                sidePanelVisible.value = false;
-                highlightSource.clear(); // Clear highlights
-                closePopup();
+                if (!isNearbyActive.value) {
+                    currentFeature.value = null;
+                    sidePanelVisible.value = false;
+                    highlightSource.clear(); // Clear highlights
+                    bufferSource.clear();
+                    closePopup();
+                }
             },
             async (_lon, _lat, coords) => {
-                // Identify Handler
                 const lonLat = toLonLat(coords);
+
+                if (isNearbyActive.value) {
+                    // Buffer analysis is now handled by Draw interaction
+                    return;
+                }
+
+                // Identify Handler
                 // Show loading
                 // We can reuse popup for loading or result
                 popupInfo.value = { name: '查询中...', address: '正在识别周边数据...', loading: true };
@@ -513,6 +944,7 @@ onMounted(async () => {
           }
           
           console.log('MapView initialization complete');
+          
       } catch (error: any) {
           console.error('Failed to initialize map:', error);
           initError.value = true;
@@ -693,16 +1125,65 @@ const updateBaseMapLayers = () => {
 const handleLayerVisibilityChange = ({ key, visible }: { key: string, visible: boolean }) => {
     if (layerConfig.value[key]) {
         layerConfig.value[key].visible = visible;
-        // Update activeLayerKeys if these map to layer IDs
-        // This requires mapping config keys to layer IDs.
-        // For now, simplified.
+        
+        if (key === 'raster') {
+            // Toggle Base Map Layers
+            const baseMapLayers = ['tdt-vec', 'tdt-cva', 'tdt-img', 'tdt-cia', 'osm', 'esri-sat'];
+            layers.value.forEach(layer => {
+                const id = layer.get('id');
+                if (id && baseMapLayers.includes(id)) {
+                    // Only toggle if it matches current base map logic?
+                    // Simplified: just toggle visibility if it's active
+                    // But activeLayerKeys controls this.
+                    // Better: Update activeLayerKeys if we want to persist state properly?
+                    // Or just setVisible directly for temporary toggle.
+                    // Using activeLayerKeys is safer for reactivity.
+                    
+                    // Actually, activeLayerKeys is for "which source is selected".
+                    // If we want to hide "Raster" entirely, we should just hide them.
+                    // But `activeLayerKeys` watcher will override it if we just use setVisible.
+                    // So we might need a separate mechanism or just hack it.
+                    
+                    // Let's use setVisible, but watcher watches activeLayerKeys.
+                    // If activeLayerKeys changes, it resets visibility.
+                    // So we should probably modify activeLayerKeys?
+                    // But activeLayerKeys determines *content*.
+                    // If we remove 'tdt-vec' from activeLayerKeys, it's gone.
+                    
+                    // Let's try direct setVisible. The watcher only runs when keys change.
+                    if (activeLayerKeys.value.includes(id)) {
+                        layer.setVisible(visible);
+                    }
+                }
+            });
+        } else if (key === 'boreholes') {
+            const layer = layers.value.find(l => l.get('id') === 'boreholes');
+            if (layer) {
+                layer.setVisible(visible);
+            }
+        }
     }
 };
 
 const handleLayerOpacityChange = ({ key, opacity }: { key: string, opacity: number }) => {
     if (layerConfig.value[key]) {
         layerConfig.value[key].opacity = opacity;
-        // Update layer opacity
+        const val = opacity / 100;
+        
+        if (key === 'raster') {
+             const baseMapLayers = ['tdt-vec', 'tdt-cva', 'tdt-img', 'tdt-cia', 'osm', 'esri-sat'];
+             layers.value.forEach(layer => {
+                const id = layer.get('id');
+                if (id && baseMapLayers.includes(id)) {
+                    layer.setOpacity(val);
+                }
+             });
+        } else if (key === 'boreholes') {
+            const layer = layers.value.find(l => l.get('id') === 'boreholes');
+            if (layer) {
+                layer.setOpacity(val);
+            }
+        }
     }
 };
 
@@ -751,15 +1232,45 @@ const handleLocation = () => {
     );
 };
 
+const handleShare = async () => {
+    if (!map.value) return;
+    const view = map.value.getView();
+    const center = view.getCenter();
+    const zoom = view.getZoom();
+    
+    if (center && zoom) {
+        const lonLat = toLonLat(center);
+        const lon = lonLat[0].toFixed(6);
+        const lat = lonLat[1].toFixed(6);
+        const z = zoom.toFixed(2);
+        
+        const url = new URL(window.location.href);
+        url.searchParams.set('lon', lon);
+        url.searchParams.set('lat', lat);
+        url.searchParams.set('z', z);
+        // Remove other params if needed or keep them?
+        // Let's keep others but remove 'id' if we just want to share view
+        // But user requirement is just "generate form like ?lon=...".
+        // Let's clean up ID to avoid confusion if sharing just view
+        url.searchParams.delete('id');
+        url.searchParams.delete('name');
+        
+        try {
+            await navigator.clipboard.writeText(url.toString());
+            ElMessage.success('链接已复制到剪贴板');
+        } catch (err) {
+            ElMessage.error('复制失败');
+            console.error('Copy failed', err);
+        }
+    }
+};
+
 const clearSelection = () => {
     clearInteractions();
     sidePanelVisible.value = false;
 };
 
-const handleLogout = () => {
-    authStore.logout();
-    router.push('/login');
-};
+// Removed duplicate handleLogout
 
 const closeSidePanel = () => {
     sidePanelVisible.value = false;
@@ -837,10 +1348,62 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* Dark Mode Support */
+.map-view-container.dark-mode :deep(.ol-layer-invertible) {
+    filter: invert(100%) hue-rotate(180deg) brightness(0.95) contrast(0.9);
+    transition: filter 0.3s ease;
+}
+
 /* Optimization for map interactions */
 :deep(.map-moving) * {
   animation: none !important;
   transition: none !important;
+}
+
+.swipe-control-container {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 50;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.swipe-slider {
+    pointer-events: auto;
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    outline: none;
+    margin: 0;
+    padding: 0;
+    cursor: ew-resize;
+}
+
+.swipe-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 4px;
+    height: 100vh;
+    background: #fff;
+    box-shadow: 0 0 10px rgba(0,0,0,0.5);
+    cursor: ew-resize;
+}
+
+.swipe-slider::-moz-range-thumb {
+    width: 4px;
+    height: 100vh;
+    background: #fff;
+    box-shadow: 0 0 10px rgba(0,0,0,0.5);
+    cursor: ew-resize;
+    border: none;
 }
 
 .map-popup-overlay {
@@ -871,6 +1434,7 @@ onUnmounted(() => {
   font-weight: 600;
   font-size: 16px;
   color: #1d1d1f;
+  margin: 0;
 }
 
 .popup-body {
@@ -973,21 +1537,71 @@ onUnmounted(() => {
   margin-bottom: 15px;
 }
 
-.floating-toolbar {
+/* Control Buttons */
+.top-right-controls {
   position: absolute;
-  top: 50%;
+  top: 30px;
   right: 20px;
-  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 90;
+}
+
+.control-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #555;
+  font-size: 18px;
+}
+
+.control-btn:hover {
+  background: rgba(255, 255, 255, 0.95);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+
+.control-btn.active {
+  background: #0071E3;
+  color: white;
+  border-color: #0071E3;
+}
+
+.control-btn.danger:hover {
+  color: #F56C6C;
+  background: rgba(245, 108, 108, 0.1);
+}
+
+.divider-horizontal {
+  height: 1px;
+  background: rgba(0, 0, 0, 0.1);
+  margin: 4px 0;
+}
+
+/* Bottom Right Navigation */
+.bottom-right-controls {
+  position: absolute;
+  bottom: 120px; /* Adjusted to be above the dock */
+  right: 20px;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  z-index: 100;
-  background: transparent;
-  box-shadow: none;
-  padding: 0;
+  z-index: 90;
+  align-items: center;
 }
 
-.toolbar-btn {
+.nav-btn {
   width: 44px;
   height: 44px;
   border-radius: 50%;
@@ -1000,98 +1614,88 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
-  color: #1d1d1f;
+  transition: all 0.2s;
+  color: #333;
   font-size: 20px;
 }
 
-.toolbar-btn:hover {
-  transform: scale(1.1);
-  background: #fff;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+.nav-btn:hover {
+  background: rgba(255, 255, 255, 0.95);
+  transform: scale(1.05);
 }
 
-.toolbar-btn.active {
-  background: #0071E3;
-  color: white;
-  border-color: #0071E3;
-}
-
-.toolbar-btn.danger {
-  color: #FF3B30;
-}
-
-.toolbar-btn.danger:hover {
-  background: #FF3B30;
-  color: white;
-  border-color: #FF3B30;
-}
-
-.toolbar-btn:disabled {
+.nav-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
   transform: none;
 }
 
-.divider {
-  height: 1px;
-  background: rgba(0, 0, 0, 0.1);
-  margin: 4px 10px;
+.logout-btn {
+  color: #FF3B30; /* Apple Red */
 }
 
-/* Global Transitions */
-.fade-slide-enter-active,
-.fade-slide-leave-active {
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+.logout-btn:hover {
+  background: #FF3B30;
+  color: white;
 }
 
-.fade-slide-enter-from,
-.fade-slide-leave-to {
-  opacity: 0;
-  transform: translateY(20px);
-}
-
-.floating-toolbar .el-button {
-  margin-left: 0 !important;
-}
-
-.map-zoom-control {
-  position: absolute;
-  bottom: 30px;
-  right: 20px;
-  background: #FFFFFF;
-  padding: 8px 4px;
-  border-radius: 4px;
+.map-zoom-control-vertical {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: 24px;
+  padding: 12px 6px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  z-index: 100;
-  width: 32px;
-}
-
-.card-shadow {
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.5);
 }
 
 .zoom-btn {
+  font-size: 20px;
   cursor: pointer;
-  color: #606266;
-  font-size: 16px;
+  color: #555;
+  padding: 4px;
   transition: color 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .zoom-btn:hover {
-  color: #1576FF;
+  color: #0071E3;
+  transform: scale(1.1);
 }
 
-:deep(.el-slider__bar) {
-  background-color: #1576FF;
+/* Remove old zoom control styling */
+.map-zoom-control {
+  display: none;
 }
 
-:deep(.el-slider__button) {
-  border-color: #1576FF;
-  width: 14px;
-  height: 14px;
+/* Top Search Container */
+.top-search-container {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  width: auto;
+  min-width: 320px;
+  transition: all 0.3s ease;
 }
+
+/* Slide Transitions */
+.slide-right-enter-active,
+.slide-right-leave-active {
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+.slide-right-enter-from,
+.slide-right-leave-to {
+  transform: translateX(100%);
+  opacity: 0;
+}
+
 </style>

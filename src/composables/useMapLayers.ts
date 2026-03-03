@@ -1,6 +1,7 @@
 import { ref, shallowRef, watch } from 'vue';
 import TileLayer from 'ol/layer/Tile';
 import VectorLayer from 'ol/layer/Vector';
+import HeatmapLayer from 'ol/layer/Heatmap';
 import XYZ from 'ol/source/XYZ';
 import OSM from 'ol/source/OSM';
 import VectorSource from 'ol/source/Vector';
@@ -87,6 +88,7 @@ export default function useMapLayers() {
       zIndex: type.includes('c') ? 1 : 0,
       visible: true, // Default to true, visibility controlled by add/remove or activeLayerKeys
       preload: 2,
+      className: (type === 'vec' || type === 'ter') ? 'ol-layer-invertible' : undefined,
     });
     
     layer.set('id', id);
@@ -108,6 +110,7 @@ export default function useMapLayers() {
       zIndex: -1,
       visible: activeLayerKeys.value.includes('osm'),
       preload: 2,
+      className: 'ol-layer-invertible',
     });
     layer.set('id', 'osm');
     const map = getMap();
@@ -170,7 +173,7 @@ export default function useMapLayers() {
     return layer;
   };
 
-  const addClusterLayer = (source: VectorSource, distance: number = 65): VectorLayer<VectorSource> => {
+  const addClusterLayer = (source: VectorSource, distance: number = 65, id: string = 'cluster-layer'): VectorLayer<VectorSource> => {
     const clusterSource = new Cluster({
       distance: distance,
       minDistance: 20,
@@ -182,6 +185,7 @@ export default function useMapLayers() {
       zIndex: 1002,
       renderBuffer: 200,
       updateWhileAnimating: false,
+      visible: true,
       style: (feature) => {
         const features = feature.get("features");
         const size = features ? features.length : 0;
@@ -208,16 +212,22 @@ export default function useMapLayers() {
         const cached = clusterStyleCache.get(size);
         if (cached) return cached;
 
+        // Enhanced Cluster Style
+        const radius = Math.min(30, 15 + size * 0.5);
         const style = new Style({
           image: new CircleStyle({
-            radius: Math.min(25, 15 + size * 0.5),
-            fill: new Fill({ color: "rgba(21, 118, 255, 0.6)" }),
-            stroke: new Stroke({ color: "rgba(255, 255, 255, 0.8)", width: 2 }),
+            radius: radius,
+            fill: new Fill({ color: "rgba(0, 113, 227, 0.8)" }), // Always light theme color
+            stroke: new Stroke({
+                color: "rgba(255, 255, 255, 0.8)",
+                width: 3
+            }),
           }),
           text: new Text({
             text: size.toString(),
-            font: 'bold 14px sans-serif',
+            font: 'bold 13px "SF Pro Text", sans-serif',
             fill: new Fill({ color: "#fff" }),
+            offsetY: 1, // Visual center correction
           }),
         });
         clusterStyleCache.set(size, style);
@@ -225,6 +235,33 @@ export default function useMapLayers() {
       },
     });
 
+    layer.set('id', id);
+    const map = getMap();
+    if (map) {
+      map.addLayer(layer);
+      layers.value = [...layers.value, layer];
+    }
+    return layer;
+  };
+
+  const addHeatmapLayer = (
+    source: VectorSource,
+    id: string = 'heatmap-layer',
+    blur: number = 15,
+    radius: number = 8
+  ): HeatmapLayer => {
+    const layer = new HeatmapLayer({
+      source: source,
+      blur: blur,
+      radius: radius,
+      weight: (feature) => {
+        const val = feature.get('value');
+        return val !== undefined ? Math.min(Math.max(val, 0), 1) : 0; // Normalize 0-1
+      },
+      zIndex: 1001,
+    });
+    
+    layer.set('id', id);
     const map = getMap();
     if (map) {
       map.addLayer(layer);
@@ -251,6 +288,7 @@ export default function useMapLayers() {
     addEsriSatelliteLayer,
     addNavigationLayer,
     addClusterLayer,
+    addHeatmapLayer,
     removeLayer,
     clearLayers,
     isFallbackActive,
