@@ -2,6 +2,14 @@
   <div class="map-view-container">
     <ErrorBoundary>
       <MapContainer ref="mapContainerRef" :map-instance="map">
+        <!-- Cesium 3D Container (Overlay) -->
+        <CesiumContainer 
+          v-if="mapReady"
+          :visible="is3DActive"
+          :view-state="viewState"
+          :features="rawFeatures"
+        />
+
         <!-- Swipe Control -->
         <div v-if="isSwipeActive" class="swipe-control-container">
             <input 
@@ -125,6 +133,18 @@
           />
         </div>
 
+        <div class="top-right-controls">
+          <el-tooltip content="3D 预览" placement="left">
+            <button 
+              class="control-btn" 
+              :class="{ active: is3DActive }"
+              @click="toggle3D"
+            >
+              <el-icon><Monitor /></el-icon>
+            </button>
+          </el-tooltip>
+        </div>
+
         <Transition name="fade-slide">
           <LayerControl 
             v-if="showLayerPanel"
@@ -172,7 +192,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { geoDataApi, type GeoDataItem } from '@/api/geodata';
 import { ElMessage, ElNotification, ElMessageBox } from 'element-plus';
-import { Location, Loading, Plus, Minus, RefreshRight, Close, LocationInformation, SwitchButton } from '@element-plus/icons-vue';
+import { Location, Loading, Plus, Minus, RefreshRight, Close, LocationInformation, SwitchButton, Monitor } from '@element-plus/icons-vue';
 import type Map from 'ol/Map';
 import type { LayerConfig } from '@/views/map/types/map';
 import useMapCore from '@/composables/useMapCore';
@@ -181,7 +201,7 @@ import useMapInteractions from '@/composables/useMapInteractions';
 import VectorSource from 'ol/source/Vector';
 import Feature from 'ol/Feature';
 import Point from 'ol/geom/Point';
-import { fromLonLat, toLonLat } from 'ol/proj';
+import { fromLonLat, toLonLat, transformExtent } from 'ol/proj';
 import { Style, Fill, Stroke, Circle as CircleStyle, RegularShape } from 'ol/style';
 import VectorLayer from 'ol/layer/Vector';
 import Overlay from 'ol/Overlay';
@@ -199,6 +219,7 @@ import LayerControl from '@/views/map/components/LayerControl.vue';
 import InfoPanel from '@/views/map/components/InfoPanel.vue';
 import StatsPanel from '@/views/map/components/StatsPanel.vue';
 import UploadDialog from '@/views/map/components/UploadDialog.vue';
+import CesiumContainer from '@/views/map/components/CesiumContainer.vue';
 
 import { getDistance } from 'ol/sphere';
 
@@ -227,6 +248,15 @@ const isNearbyActive = ref(false);
 const isSwipeActive = ref(false);
 const swipeValue = ref(50);
 const mouseTooltipRef = ref<HTMLElement | null>(null);
+
+// 3D Mode State
+const is3DActive = ref(false);
+const rawFeatures = ref<any[]>([]);
+const viewState = ref({
+    center: [116.3974, 39.9093] as [number, number],
+    zoom: 10,
+    extent: undefined as [number, number, number, number] | undefined
+});
 
 // Tool toggle handlers
 const toggleLayers = () => {
@@ -524,6 +554,31 @@ const handleLogout = () => {
     });
 };
 
+const toggle3D = () => {
+    if (!map.value) return;
+    
+    is3DActive.value = !is3DActive.value;
+    
+    if (is3DActive.value) {
+        // Sync OL to Cesium
+        const view = map.value.getView();
+        const center = toLonLat(view.getCenter()!);
+        const zoom = view.getZoom() || 10;
+        const extent = view.calculateExtent(map.value.getSize()!);
+        const lonLatExtent = transformExtent(extent, 'EPSG:3857', 'EPSG:4326') as [number, number, number, number];
+        
+        viewState.value = {
+            center: center as [number, number],
+            zoom: zoom,
+            extent: lonLatExtent
+        };
+        
+        ElMessage.success('已切换至 3D 预览模式');
+    } else {
+        ElMessage.info('已回到 2D 地图模式');
+    }
+};
+
 const toggleNearby = () => {
   if (isSwipeActive.value) {
       ElMessage.warning('请先关闭卷帘对比模式');
@@ -750,6 +805,22 @@ onMounted(async () => {
             // Sync Zoom Slider
             const zoom = mapInstance.getView().getZoom();
             if (zoom) zoomLevel.value = zoom;
+            
+            // Sync 3D View State
+            if (is3DActive.value) {
+                const center = mapInstance.getView().getCenter();
+                if (center && zoom) {
+                    const lonLat = toLonLat(center);
+                    const extent = mapInstance.getView().calculateExtent(mapInstance.getSize());
+                    const lonLatExtent = transformExtent(extent, 'EPSG:3857', 'EPSG:4326') as [number, number, number, number];
+                    
+                    viewState.value = {
+                        center: lonLat as [number, number],
+                        zoom: zoom,
+                        extent: lonLatExtent
+                    };
+                }
+            }
           });
           
           clearLayers();
@@ -1210,6 +1281,8 @@ const loadGeoData = async (source: VectorSource) => {
         if (data.length === 0) {
             console.warn('No geo data returned from API');
         }
+
+        rawFeatures.value = data; // Sync for Cesium
 
         source.clear();
         data.forEach((item: GeoDataItem) => {

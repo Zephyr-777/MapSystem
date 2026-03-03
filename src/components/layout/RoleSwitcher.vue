@@ -39,7 +39,7 @@ const handleRoleChange = (val: string) => {
 .role-switcher-container {
   position: fixed;
   top: 20px;
-  right: 20px;
+  left: 20px;
   z-index: 2000; /* High z-index to be above everything */
   padding: 12px;
   border-radius: 12px;
