@@ -89,7 +89,9 @@ const handleMouseEnter = () => {
     isStatsVisible.value = true;
     // Resize charts when panel becomes visible
     nextTick(() => {
-      handleResize();
+        // Force charts to re-read container size
+        if (pieChart) pieChart.resize();
+        if (barChart) barChart.resize();
     });
   }
 };

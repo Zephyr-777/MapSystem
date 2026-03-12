@@ -104,6 +104,7 @@
           @toggle-buffer="toggleBufferTool"
           @toggle-identify="toggleIdentifyTool"
           @open-gallery="$router.push('/gallery')"
+          @open-geology-hall="$router.push('/geology')"
           @share-view="handleShareView"
           @upload="showUploadDialog = true"
         />
@@ -126,10 +127,8 @@
 
       <div v-if="mapReady">
         <div class="top-search-container">
-          <SearchBox 
-            :fetch-suggestions="handleSearchSuggestions"
-            @select-result="handleSelectResult"
-            @upload="showUploadDialog = true"
+          <SmartSearchBox 
+            @search-result="handleSmartSearchResult"
           />
         </div>
 
@@ -213,7 +212,7 @@ import HeatmapLayer from 'ol/layer/Heatmap';
 // Components
 import ErrorBoundary from '@/components/ErrorBoundary.vue';
 import MapContainer from '@/views/map/components/MapContainer.vue';
-import SearchBox from '@/views/map/components/SearchBox.vue';
+import SmartSearchBox from '@/views/map/components/SmartSearchBox.vue';
 import BottomDock from '@/components/layout/BottomDock.vue';
 import LayerControl from '@/views/map/components/LayerControl.vue';
 import InfoPanel from '@/views/map/components/InfoPanel.vue';
@@ -715,7 +714,6 @@ const handleUploadSuccess = async (asset: any) => {
     }
 };
 
-
 const handleVisualizeNetCDF = (data: any) => {
     // 1. Remove existing heatmap layer
     const existing = layers.value.find(l => l.get('id') === 'nc-heatmap');
@@ -984,7 +982,8 @@ onMounted(async () => {
                 
                 try {
                     const res = await geoDataApi.identify(lonLat[0], lonLat[1]);
-                    const data = res.data || []; // Access the data array from response
+                    // Access the data array from response - make sure we handle different response structures
+                    const data = Array.isArray(res) ? res : (res.data || []);
                     
                     if (data && data.length > 0) {
                         // Found something
@@ -1045,141 +1044,41 @@ onMounted(async () => {
 });
 
 // Methods
-const handleSearchSuggestions = async (queryString: string, cb: (results: any[]) => void) => {
-    if (!queryString) {
-        cb([]);
-        return;
-    }
-
-    try {
-        let center: [number, number] | undefined;
-        if (map.value) {
-            const view = map.value.getView();
-            const centerCoords = view.getCenter();
-            if (centerCoords) {
-                const lonLat = toLonLat(centerCoords);
-                center = lonLat as [number, number];
-            }
-        }
-
-        const [geoRes, poiRes] = await Promise.allSettled([
-            geoDataApi.search(queryString, center),
-            searchTiandituPOI(queryString)
-        ]);
-
-        let results: any[] = [];
-
-        // 1. Geo Data
-        if (geoRes.status === 'fulfilled') {
-             const res = geoRes.value;
-             const data = Array.isArray(res) ? res : (res as any).data || [];
-             if (data.length > 0) {
-                 results.push({ type: 'header', name: '地质数据', id: 'header-asset' });
-                 results = results.concat(data.map((item: any) => ({
-                     ...item,
-                     type: 'asset',
-                     value: item.name 
-                 })));
-             }
-        }
-
-        // 2. POI Data
-        if (poiRes.status === 'fulfilled') {
-            const pois = poiRes.value;
-            if (pois.length > 0) {
-                results.push({ type: 'header', name: '地点信息', id: 'header-location' });
-                results = results.concat(pois);
-            }
-        }
-
-        // 3. Empty State
-        if (results.length === 0) {
-            results.push({ type: 'empty', name: '未发现相关地质数据或地点', id: 'empty' });
-        }
-
-        cb(results);
-    } catch (e) {
-        console.error(e);
-        cb([{ type: 'empty', name: '搜索发生错误', id: 'error' }]);
-    }
+const handleSmartSearchResult = (results: GeoDataItem[]) => {
+  if (!results || results.length === 0) return;
+  
+  // Clear previous
+  highlightSource.clear();
+  selectedItems.value = results;
+  
+  // Add markers
+  const features: Feature[] = [];
+  results.forEach(item => {
+      if (item.center_x && item.center_y) {
+          const coords = toMapCoords([item.center_x, item.center_y], item.srid);
+          const f = new Feature(new Point(coords));
+          f.setProperties(item);
+          highlightSource.addFeature(f);
+          features.push(f);
+      }
+  });
+  
+  // Fit view
+  if (features.length > 0) {
+      const extent = highlightSource.getExtent();
+      if (!extent.some(isNaN)) {
+          map.value?.getView().fit(extent, { padding: [100, 100, 100, 100], duration: 1000 });
+      }
+  }
+  
+  // Show side panel
+  if (results.length === 1) {
+      currentFeature.value = results[0];
+  } else {
+      currentFeature.value = null; // Multi mode
+  }
+  sidePanelVisible.value = true;
 };
-
-const searchTiandituPOI = async (keyword: string) => {
-    try {
-        const postObj = {
-            keyWord: keyword,
-            level: "11",
-            mapBound: "-180,-90,180,90",
-            queryType: "1",
-            start: "0",
-            count: "5"
-        };
-        const postStr = JSON.stringify(postObj);
-        // 使用 encodeURIComponent 编码 postStr
-        const url = `https://api.tianditu.gov.cn/search?postStr=${encodeURIComponent(postStr)}&type=query&tk=ba13e30aae52239f8056f1c7421cae7c`;
-        
-        const res = await fetch(url);
-        if (!res.ok) {
-            console.warn(`TDT Search failed with status: ${res.status}`);
-            return [];
-        }
-        const data = await res.json();
-        
-        if (data.pois && Array.isArray(data.pois)) {
-            return data.pois.map((poi: any) => ({
-                name: poi.name,
-                address: poi.address,
-                type: 'location',
-                value: poi.name,
-                location: {
-                    lon: parseFloat(poi.lonlat.split(' ')[0]),
-                    lat: parseFloat(poi.lonlat.split(' ')[1])
-                },
-                id: poi.hotPointID || `poi-${Math.random()}`
-            }));
-        }
-        return [];
-    } catch (e) {
-        console.warn('TDT Search failed', e);
-        return [];
-    }
-};
-
-const handleSelectResult = (item: any) => {
-    if (item.type === 'header' || item.type === 'empty') return;
-
-    if (item.type === 'asset') {
-        currentFeature.value = item;
-        sidePanelVisible.value = true;
-        if (item.center_x && item.center_y) {
-            const coords = toMapCoords([item.center_x, item.center_y], item.srid);
-            flyTo(coords);
-            setNavigationMarker(coords, item.name);
-        }
-    } else if (item.type === 'location') {
-        // Handle POI selection
-        sidePanelVisible.value = false; // Close info panel for POI
-        const coords = fromLonLat([item.location.lon, item.location.lat]) as [number, number];
-        
-        if (map.value) {
-            map.value.getView().animate({
-                center: coords,
-                zoom: 14,
-                duration: 1000
-            });
-        }
-        
-        // Show Popup
-        popupInfo.value = item;
-        if (popupOverlay) {
-          popupOverlay.setPosition(coords);
-        }
-        
-        // setNavigationMarker(coords, item.name, true);
-        // ElMessage.success(`已定位到: ${item.name}`);
-    }
-};
-
 
 const toggleBaseMap = () => {
     if (currentBaseMap.value === 'vector') {

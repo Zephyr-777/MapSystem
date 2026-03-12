@@ -11,10 +11,14 @@
         <el-input
           v-model="searchQuery"
           placeholder="搜索地质数据..."
-          prefix-icon="Search"
           class="search-input"
           clearable
-        />
+          @input="handleSearch"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
       </div>
     </div>
 
@@ -23,13 +27,13 @@
         <el-skeleton :rows="3" animated />
       </div>
       
-      <div v-else-if="filteredAssets.length === 0" class="empty-state">
+      <div v-else-if="assets.length === 0" class="empty-state">
         <el-empty description="暂无公开地质数据" />
       </div>
 
       <div v-else class="card-grid">
         <div 
-          v-for="asset in filteredAssets" 
+          v-for="asset in assets" 
           :key="asset.id" 
           class="asset-card glass-panel"
           @mouseenter="hoveredId = asset.id"
@@ -89,43 +93,45 @@ const formatDate = (dateStr: string) => {
   return dateStr.split('T')[0];
 };
 
-const loadAssets = async () => {
+const loadAssets = async (query = '') => {
   loading.value = true;
   try {
-    const res = await geoDataApi.getList();
+    let res;
+    if (query) {
+      res = await geoDataApi.search(query);
+    } else {
+      res = await geoDataApi.getList();
+    }
+    
     // Use type assertion or check response structure
     const data = Array.isArray(res) ? res : (res as any).data || [];
     assets.value = data;
   } catch (e) {
     console.error(e);
-    ElMessage.error('加载数据失败');
+    ElMessage.error('获取地质数据失败');
   } finally {
     loading.value = false;
   }
 };
 
-const handleView = (asset: GeoDataItem) => {
-  if (asset.center_x && asset.center_y) {
-    router.push({
-      name: 'Map', // Ensure route name matches
-      query: {
-        lat: asset.center_y,
-        lon: asset.center_x,
-        zoom: 14,
-        id: asset.id,
-        name: asset.name
-      }
-    });
-  } else {
-    ElMessage.warning('该数据缺少坐标信息，无法定位');
-    // Still go to map? Maybe just go to map center
-    router.push({ name: 'Map' });
-  }
+const handleSearch = () => {
+  loadAssets(searchQuery.value);
 };
 
 onMounted(() => {
   loadAssets();
 });
+
+const handleView = (asset: GeoDataItem) => {
+  // Pass extent via query or params to center map
+  router.push({
+    name: 'Map',
+    query: {
+      id: asset.id,
+      center: asset.center_x && asset.center_y ? `${asset.center_x},${asset.center_y}` : undefined
+    }
+  });
+};
 </script>
 
 <style scoped>

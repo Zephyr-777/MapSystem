@@ -17,23 +17,22 @@ const router = createRouter({
       meta: { requiresAuth: false }
     },
     {
+      path: '/',
+      name: 'GeologyHall',
+      component: () => import('@/views/GeologyHallView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/map',
+      name: 'Map',
+      component: () => import('@/views/MapView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/gallery',
       name: 'Gallery',
       component: () => import('@/views/GalleryView.vue'),
       meta: { requiresAuth: true }
-    },
-    {
-      path: '/',
-      name: 'Layout',
-      component: () => import('@/layouts/MainLayout.vue'),
-      meta: { requiresAuth: true },
-      children: [
-        {
-          path: '',
-          name: 'Map',
-          component: () => import('@/views/MapView.vue')
-        }
-      ]
     }
   ]
 })

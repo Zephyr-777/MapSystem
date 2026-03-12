@@ -71,6 +71,12 @@
       <div class="dock-divider"></div>
 
       <div class="dock-group">
+        <el-tooltip content="地质数据大厅" placement="top" :show-after="500">
+          <button class="dock-item" @click="$emit('open-geology-hall')">
+            <el-icon><DataBoard /></el-icon>
+          </button>
+        </el-tooltip>
+
         <el-tooltip content="共享大厅" placement="top" :show-after="500">
           <button class="dock-item" @click="$emit('open-gallery')">
             <el-icon><Grid /></el-icon>
@@ -108,7 +114,8 @@ import {
   InfoFilled, 
   Grid, 
   Share as ShareIcon, 
-  UploadFilled 
+  UploadFilled,
+  DataBoard 
 } from '@element-plus/icons-vue';
 
 const authStore = useAuthStore();
@@ -132,6 +139,7 @@ const emit = defineEmits<{
   (e: 'toggle-buffer'): void;
   (e: 'toggle-identify'): void;
   (e: 'open-gallery'): void;
+  (e: 'open-geology-hall'): void;
   (e: 'share-view'): void;
   (e: 'upload'): void;
 }>();

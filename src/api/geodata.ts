@@ -103,6 +103,13 @@ export const geoDataApi = {
     }) as unknown as Promise<GeoDataListResponse>
   },
 
+  // 智能语义搜索
+  smartSearch: (query: string) => {
+    return api.get<GeoDataListResponse>('/api/geodata/smart-search', {
+      params: { q: query }
+    }) as unknown as Promise<GeoDataListResponse>
+  },
+
   // 获取地质数据详情
   getDetail: (id: number) => {
     return api.get<any>(`/api/geodata/detail/${id}`) as unknown as Promise<any>

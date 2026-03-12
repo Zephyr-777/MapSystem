@@ -1,0 +1,224 @@
+\documentclass[a4paper,12pt]{ctexart}
+\usepackage{geometry}
+% 设置页边距
+\geometry{left=3.18cm,right=3.18cm,top=2.54cm,bottom=2.54cm}
+
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{setspace}
+\usepackage{enumitem}
+\usepackage{indentfirst}
+\usepackage{fontspec}
+
+% 字体设置
+\newcommand{\xiaosi}{\fontsize{12pt}{22pt}\selectfont} % 小四, 22磅行距
+\newcommand{\sanhao}{\fontsize{16pt}{24pt}\selectfont} % 三号
+\newcommand{\xiaosan}{\fontsize{15pt}{22.5pt}\selectfont} % 小三
+
+% 标题格式设置
+% 一级标题：宋体小三号加粗，段落前 0.5 行
+\titleformat{\section}{\xiaosan\songti\bfseries}{\chinese{section}、}{0em}{}
+\titlespacing*{\section}{0pt}{0.5\baselineskip}{0pt}
+
+% 二级标题：宋体四号加粗
+\titleformat{\subsection}{\zihao{4}\songti\bfseries}{\thesubsection}{1em}{}
+\titlespacing*{\subsection}{0pt}{0.5\baselineskip}{0pt}
+
+% 页眉页脚设置
+\pagestyle{fancy}
+\fancyhf{} % 清空当前设置
+\fancyfoot[C]{\xiaosi\thepage} % 页脚居中页码
+\renewcommand{\headrulewidth}{0pt} % 去掉页眉横线
+
+% 列表设置
+\setlist[enumerate]{label={[\arabic*]}, leftmargin=2em, itemsep=0pt, parsep=0pt, topsep=0pt}
+
+\begin{document}
+
+% ================= 封面 =================
+\begin{titlepage}
+    \centering
+    \vspace*{2cm}
+    
+    {\zihao{2}\heiti 北京化工大学本科生毕业设计（论文）中期报告 \par}
+    
+    \vspace{5cm}
+    
+    {\zihao{3}\songti
+    \renewcommand{\arraystretch}{2}
+    \begin{tabular}{lc}
+        \textbf{论文题目：} & 多源地质数据管理与共享平台的设计与实现 \\
+        \textbf{学生姓名：} & 孟泽晖 \\
+        \textbf{学号：} & 2022040183 \\
+        \textbf{专业班级：} & 计科2201 \\
+        \textbf{学院：} & 信息科学与技术学院 \\
+        \textbf{指导教师：} & [填写指导教师姓名] \\
+    \end{tabular}
+    }
+    
+    \vfill
+    
+    {\zihao{4}\songti \today \par}
+    \vspace{2cm}
+\end{titlepage}
+
+% ================= 正文 =================
+% 清除页码并重新开始
+\newpage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+% 应用正文格式：宋体小四，行间距 22 磅
+\xiaosi
+\songti
+
+\section{题目背景和意义}
+
+随着地球科学研究的深入和信息技术的飞速发展，地质数据的获取手段日益多样化，数据的类型和规模呈现爆炸式增长。地质数据具有典型的多源异构特征，主要包括存储气象和海洋数据的 NetCDF（Network Common Data Form）格式、存储矢量地理信息的 Shapefile（SHP）格式以及存储遥感影像的 GeoTIFF（TIF）格式。长期以来，这些数据分散存储于不同的业务系统中，缺乏统一的管理标准和共享机制，形成了严重的“数据孤岛”现象。这种分散存储的模式不仅增加了数据检索和获取的难度，更极大地阻碍了跨学科科研协作的效率，难以满足现代地质科学研究对多源数据融合分析的迫切需求。
+
+在地质灾害预警、矿产资源勘探、环境监测等关键领域，研究人员往往需要同时叠加分析矢量构造图、栅格影像图以及多维气象场数据。例如，在滑坡灾害预警中，需要结合地质构造（矢量数据）、地形地貌（栅格数据）以及降雨量（多维网格数据）进行综合研判。然而，不同来源的数据往往采用不同的坐标参考系统（CRS），如 WGS84、CGCS2000、北京54 等，导致空间叠加分析困难，经常出现位置偏差或无法匹配的情况。此外，传统的文件式管理方式难以支持海量地质数据的高效查询和并发访问，无法满足Web环境下的实时可视化需求。
+
+构建一个基于统一 WGS84 坐标系的多源地质数据管理与共享平台，实现对异构数据的统一解析、存储、可视化与空间分析，对于提升地质数据的利用率和科研工作的协同效率具有重要的理论意义和应用价值。该平台能够打破数据壁垒，实现多源数据的深度融合，为地质科研人员提供一站式的数据服务，从而推动地质科学研究向数据驱动的范式转型。同时，基于 WebGIS 的轻量化架构设计，使得地质数据能够脱离专业的桌面端软件，通过浏览器即可便捷访问，极大地降低了数据使用的门槛，促进了地质信息的社会化共享。
+
+本项目旨在利用先进的 WebGIS 技术，设计并实现一套轻量级、高性能的地质数据管理平台，解决多源异构数据的融合与共享难题，为地质科研人员提供便捷的数据服务。通过本项目的实施，不仅能够锻炼学生综合运用计算机科学与技术解决实际问题的能力，还能为地质信息化建设提供有益的探索和实践经验。
+
+\section{国内外研究现状}
+
+WebGIS（万维网地理信息系统）技术经过多年的发展，已经从早期的静态地图发布演变为支持复杂空间分析的分布式系统。随着云计算和大数据技术的兴起，WebGIS 正向着服务化（SaaS/PaaS）、智能化和三维化方向发展。
+
+在数据存储方面，空间数据库技术已趋于成熟。PostgreSQL 结合 PostGIS 扩展模块，已成为开源界最强大的空间数据库解决方案。PostGIS 严格遵循 OGC（Open Geospatial Consortium）制定的 Simple Features for SQL 标准，支持点、线、面等基本几何类型以及多点、多线、多面等复杂几何类型的存储。它提供了丰富的空间分析函数，如空间关系判断（包含、相交、相离）、空间测量（距离、面积、长度）以及空间处理（缓冲区、叠加、融合）。此外，PostGIS 采用 R-Tree 空间索引机制，能够在大规模空间数据集中实现毫秒级的查询响应。相比于商业数据库 Oracle Spatial，PostGIS 在灵活性、扩展性和成本控制上具有显著优势，且拥有庞大的开源社区支持，被广泛应用于地质、气象、城市规划等领域的大数据管理。
+
+在数据共享标准方面，OGC 制定了一系列国际标准，旨在解决地理空间数据的互操作性问题。其中，WMS（Web Map Service）用于地图影像服务，支持将地图渲染为图片格式进行网络传输；WFS（Web Feature Service）用于矢量要素服务，支持以 GML（Geography Markup Language）或 GeoJSON 格式传输矢量数据，允许客户端对要素进行查询、编辑和分析；WCS（Web Coverage Service）则用于栅格覆盖服务，支持多维网格数据的共享。国外发达国家在地质数据共享方面起步较早，如美国 USGS 的 EarthExplorer 平台和欧洲的 INSPIRE 空间信息基础设施，均实现了基于 Web 的海量地质数据共享，提供了丰富的数据发现、下载和在线分析功能。国内方面，中国地质调查局也建立了“地质云”平台，汇聚了海量的地质调查数据，实现了数据的集中管理和共享。但在轻量级、针对特定科研团队的定制化共享平台方面，仍有较大的发展空间，特别是在针对 NetCDF 等多维气象数据的在线可视化分析方面，现有的通用平台支持力度尚显不足。
+
+当前，前端可视化技术主要依赖于 OpenLayers、Leaflet 和 Mapbox GL JS 等开源库。OpenLayers 凭借其对 OGC 标准的完美支持和对各种坐标系的强大处理能力，成为构建专业级 WebGIS 应用的首选。它支持矢量切片、WebGL 渲染等先进技术，能够处理复杂的地图投影转换和大规模矢量数据的渲染。然而，如何在 Web 端高效渲染海量矢量点位（如百万级地震点）和动态解析 NetCDF 多维数据（如时序气象场），依然是当前研究的热点和难点。传统的做法往往依赖于后端生成瓦片，前端仅负责展示，交互性较差。随着前端性能的提升，基于 Canvas 和 WebGL 的客户端渲染技术逐渐成为主流，能够在浏览器端实现高性能的数据可视化和交互分析。
+
+\section{已完成的主要内容与待解决的问题}
+
+\subsection{已完成的主要内容}
+
+截止目前，项目已完成系统核心架构的搭建和关键功能模块的开发，具体包括：
+
+1. \textbf{系统架构搭建}：
+   确立了前后端分离的技术路线，实现了松耦合的系统架构。前端采用 Vue 3 框架结合 OpenLayers 地图引擎，利用 Vue 3 的响应式机制和组件化开发模式，构建了交互友好的用户界面。后端采用 Python FastAPI 高性能框架，充分利用其异步（Async/Await）特性处理高并发请求，提高了系统的吞吐量。数据库选用 PostgreSQL + PostGIS，构建了稳健的空间数据存储底座。
+
+2. \textbf{多源数据解析与存储}：
+   \begin{itemize}
+       \item \textbf{Shapefile 矢量数据解析}：实现了基于 GDAL/OGR 库的 Shapefile 矢量数据解析模块。该模块能够自动读取 SHP 文件及其关联的 DBF 属性表和 PRJ 投影文件，提取空间几何信息（Geometry）和属性数据，并将其转换为 GeoJSON 格式。利用 PostGIS 的 \texttt{ST\_GeomFromGeoJSON} 函数将数据存入数据库，并自动建立 GIST 空间索引，以加速后续的空间查询。
+       \item \textbf{NetCDF 气象数据解析}：实现了基于 netCDF4 库的 NetCDF 气象数据解析模块。该模块能够读取 NetCDF 文件的维度（Dimensions）、变量（Variables）和属性（Attributes），动态提取指定时间步长和高度层的变量值。解析后的时空元数据存入数据库，实体文件存储于文件系统，实现了元数据管理与实体存储的分离。
+       \item \textbf{坐标系统一}：建立了统一的数据模型，所有空间数据入库前均通过 \texttt{osr} 库进行坐标转换，统一转换为 EPSG:4326 (WGS84) 坐标系。这一机制确保了不同来源、不同原始投影的数据在地图上能够正确叠加，消除了空间位置偏差。
+   \end{itemize}
+
+3. \textbf{空间分析功能实现}：
+   \begin{itemize}
+       \item \textbf{缓冲区查询}：基于 PostGIS 的 \texttt{ST\_DWithin} 函数实现了高效的缓冲区查询。用户可在地图上点击任意点并设置缓冲半径（如 1km），系统能够快速检索出该缓冲区范围内的所有地质要素。该功能在突发地质灾害应急响应中具有重要作用，可用于快速评估灾害影响范围。
+       \item \textbf{空间包含查询}：基于 \texttt{ST\_Contains} 和 \texttt{ST\_Intersects} 函数实现了空间包含查询。支持用户在地图上绘制多边形区域，系统检索该区域内部或与之相交的地质要素。
+       \item \textbf{交互式测量}：实现了前端的距离测量和面积测量工具。利用 OpenLayers 的 \texttt{Sphere} 算法计算球面距离和面积，支持用户在地图上进行交互式绘图测量，结果实时显示。
+   \end{itemize}
+
+4. \textbf{用户权限管理}：
+   \begin{itemize}
+       \item \textbf{前端状态管理}：基于 Pinia 状态管理库实现了前端的用户状态管理，能够持久化存储用户的登录状态和基本信息，并根据用户角色动态控制菜单和按钮的显示。
+       \item \textbf{后端安全认证}：后端实现了基于 JWT (JSON Web Token) 的无状态身份认证机制。设计了 RBAC（基于角色的访问控制）模型，区分了管理员（Admin）和普通用户（Researcher）的操作权限。管理员拥有数据上传、删除和用户管理的最高权限，而普通用户仅拥有数据浏览和查询权限，有效保障了系统的数据安全。
+   \end{itemize}
+
+\subsection{待解决的问题}
+
+尽管核心功能已实现，但系统在性能和用户体验方面仍存在以下问题待解决：
+
+1. \textbf{大数据量渲染性能瓶颈}：当 Shapefile 文件包含数万个甚至更多矢量要素时，前端 OpenLayers 直接加载 GeoJSON 数据进行渲染会导致浏览器内存占用过高，页面出现卡顿甚至崩溃。需要引入矢量切片（Vector Tiles）技术，由后端动态生成 MVT（Mapbox Vector Tiles）格式切片，或在前端采用聚合算法（Cluster）及 WebGL 渲染策略，以优化大规模数据的渲染性能。
+
+2. \textbf{真实数据环境测试}：当前测试主要基于模拟生成的测试数据和小规模公开样本数据，缺乏 GB 级以上真实地质大数据的压力测试。后续需要导入真实的地质调查数据，模拟多用户并发访问场景，对系统的响应时间、吞吐量和稳定性进行全面的压力测试，并根据测试结果进行针对性的性能调优。
+
+3. \textbf{NetCDF 可视化增强}：目前系统仅实现了 NetCDF 数据的元数据提取和简单的数值查询，尚未在地图上实现动态色斑图（Heatmap）、流场图（Wind Barb）或等值线的实时渲染。后续需要进一步研究 Canvas 或 WebGL 技术，结合 Marching Squares 等算法，在前端实现 NetCDF 数据的高性能可视化，支持时间轴播放和多维切片展示。
+
+\section{设计方法与实施方案}
+
+本项目采用主流的 B/S（Browser/Server）架构，遵循软件工程的敏捷开发模式进行迭代开发。系统整体架构分为数据层、服务层和应用层三层结构，层与层之间通过标准接口进行交互，保证了系统的低耦合和高内聚。
+
+\subsection{前端设计}
+前端基于 Vue 3 + TypeScript + Vite 构建。Vue 3 的 Composition API 提供了更好的逻辑复用和代码组织方式，使得复杂的地图交互逻辑更易于维护。TypeScript 的引入增强了代码的类型安全性，减少了运行时错误。
+\begin{itemize}
+    \item \textbf{地图组件封装}：将 OpenLayers 的核心功能封装为独立的 \texttt{MapContainer} 组件，通过 Props 和 Events 与父组件通信，实现了地图逻辑与业务逻辑的分离。
+    \item \textbf{状态管理}：使用 Pinia 统一管理全局状态，包括用户信息、地图图层显隐状态、当前激活的交互工具等，确保了应用状态的一致性。
+    \item \textbf{UI 交互}：UI 组件库选用 Element Plus，其丰富的组件库能够快速构建出美观、规范的管理界面。
+\end{itemize}
+
+\subsection{后端设计}
+后端基于 FastAPI 框架，利用其基于 Starlette 的异步特性，能够高效处理大量的并发请求，特别适合 I/O 密集型的 WebGIS 应用。
+\begin{itemize}
+    \item \textbf{ORM 映射}：使用 SQLAlchemy 作为 ORM 框架，结合 GeoAlchemy2 扩展，实现了 Python 对象与 PostGIS 空间数据表的无缝映射，简化了数据库操作。
+    \item \textbf{RESTful API}：遵循 RESTful 风格设计 API 接口，提供清晰、语义化的 URL 路径。例如，\texttt{GET /geodata} 用于获取数据列表，\texttt{POST /upload} 用于上传数据，\texttt{GET /identify} 用于空间属性识别。接口文档通过 Swagger UI 自动生成，便于前后端联调。
+    \item \textbf{空间计算下沉}：为了提高计算效率，将复杂的空间运算（如缓冲区分析、最近邻查询）下沉至数据库层，利用 PostGIS 高效的 C 语言底层实现来完成计算，避免将大量几何数据传输至应用层进行处理，显著降低了网络传输开销和应用服务器负载。
+\end{itemize}
+
+\subsection{数据处理方案}
+针对不同类型的地质数据，设计了差异化的处理方案：
+\begin{itemize}
+    \item \textbf{矢量数据}：对于上传的 Shapefile，后端通过 GDAL 转换为 WKT（Well-Known Text）或 WKB（Well-Known Binary）格式存入 PostGIS 的 \texttt{geometry} 字段，并建立空间索引。
+    \item \textbf{栅格/网格数据}：对于 GeoTIFF 和 NetCDF 等大文件，采用“存取分离”策略。实体文件直接存储于服务器的高速文件系统中，数据库仅存储文件路径、空间范围（Extent）、时间范围等元数据索引。在查询时，先通过数据库索引快速定位文件，再通过文件 I/O 读取具体数据，既保证了检索速度，又避免了数据库膨胀。
+\end{itemize}
+
+\section{进度计划}
+
+根据任务书要求及当前进展，后续工作安排如下：
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|p{4cm}|p{10cm}|}
+\hline
+\textbf{时间节点} & \textbf{计划内容} \\
+\hline
+2025.12 - 2026.01 & 完成文献调研，确定技术选型，搭建前后端开发环境（已完成） \\
+\hline
+2026.01 - 2026.02 & 完成数据库详细设计，实现用户登录注册及基础地图加载功能（已完成） \\
+\hline
+2026.02 - 2026.03 & 完成多源数据（SHP/NetCDF）上传解析功能及空间查询接口开发（已完成） \\
+\hline
+2026.03 - 2026.04 & \textbf{（进行中）} 优化大数据量渲染性能，引入矢量切片技术；实现 NetCDF 数据的动态可视化展示 \\
+\hline
+2026.04 - 2026.05 & 系统集成测试，修复 Bug，导入真实数据进行压力测试；撰写毕业论文初稿 \\
+\hline
+2026.05 - 2026.06 & 根据导师意见修改论文定稿，准备毕业答辩 PPT，进行预答辩 \\
+\hline
+\end{tabular}
+\end{table}
+
+\section{参考资料}
+
+\begin{enumerate}
+    \item 吴信才. 地理信息系统设计与实现[M]. 北京: 电子工业出版社, 2009: 12-15.
+    \item 郭仁忠. 空间分析[M]. 武汉: 武汉测绘科技大学出版社, 2000: 56-68.
+    \item 龚健雅. 地理信息系统基础[M]. 北京: 科学出版社, 2001: 102-105.
+    \item 宋关福, 钟耳顺. 组件式地理信息系统研究与开发[J]. 中国图象图形学报, 1998, 3(4): 313-317.
+    \item 李德仁, 邵振峰. 论新地理信息时代的信息化测绘[J]. 测绘学报, 2009, 38(5): 466-474.
+    \item 陈述彭, 鲁学军, 周成虎. 地理信息系统导论[M]. 北京: 科学出版社, 1999: 1-10.
+    \item 汤国安. 开源GIS：QGIS软件应用指南[M]. 北京: 科学出版社, 2015.
+    \item 景海涛. 基于PostGIS的空间数据库技术研究[J]. 测绘通报, 2008(5): 65-67.
+    \item 王家耀. 空间信息系统原理[M]. 北京: 科学出版社, 2001.
+    \item 刘瑜. 地理信息系统原理[M]. 北京: 科学出版社, 2019.
+    \item 张海涛. 基于WebGIS的气象数据共享平台设计与实现[D]. 北京: 中国地质大学, 2018.
+    \item 李晓明. 基于FastAPI的微服务架构设计与实践[J]. 计算机应用与软件, 2021, 38(10): 22-26.
+    \item 樊红. ArcObjects开发指南[M]. 武汉: 武汉大学出版社, 2004.
+    \item 闾国年. 地理信息系统集成原理与方法[M]. 北京: 科学出版社, 2003.
+    \item Ryżyński G, Nałęcz T. Engineering-Geological Data Model [J]. IOP Conference Series: Earth and Environmental Science, 2016, 44(3): 032025.
+    \item Open Geospatial Consortium. OpenGIS Web Map Server Implementation Specification [S]. OGC 06-042, 2006.
+    \item Ramsey P. PostGIS: Advanced Spatial Databases [J]. FOSS4G Conference Proceedings, 2007.
+    \item Anderson G, Vande E. Database Design for Geology [J]. Geoinformatics, 2010, 12(4): 45-50.
+    \item Mitchell T. Web Mapping Illustrated: Using Open Source GIS Toolkits [M]. O'Reilly Media, 2005.
+\end{enumerate}
+
+% ================= 指导教师评阅页 =================
+\newpage
+\thispagestyle{empty}
+\section*{指导教师评语}
+
+\vspace{8cm}
+
+\noindent
+\begin{tabular}{p{8cm}r}
+    & 指导教师签字：\underline{\hspace{4cm}} \\
+    & \\
+    & 2026 年 \hspace{1cm} 月 \hspace{1cm} 日 \\
+\end{tabular}
+
+\end{document}

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.v1 import geodata, auth
+from app.api.v1 import geodata, auth, geology
 from app.core.config import settings
 from app.models.base import Base
 from app.core.database import engine, init_postgis
@@ -35,6 +35,7 @@ app.add_middleware(
 # 注册路由
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(geodata.router, prefix="/api/geodata", tags=["地质数据"])
+app.include_router(geology.router, prefix="/api/geology", tags=["虚拟地质数据"])
 
 @app.get("/")
 async def root():
