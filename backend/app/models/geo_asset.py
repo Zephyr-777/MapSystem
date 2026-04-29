@@ -53,6 +53,9 @@ class GeoAsset(Base):
     
     description = Column(String(500), nullable=True, comment="描述信息")
 
+    # Optimized preview image path for TIF/JPG/PNG thumbnails
+    image_path = Column(String(500), nullable=True, comment="优化预览图片路径")
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

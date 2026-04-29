@@ -1,4 +1,4 @@
-import api from './auth'
+import { api, downloadApi } from './client'
 
 export interface FeatureProperties {
   id: number
@@ -11,6 +11,7 @@ export interface FeatureProperties {
   elevation?: number
   sample_date?: string
   description?: string
+  image_path?: string
   highlights?: Record<string, string>
   [key: string]: any
 }
@@ -55,32 +56,32 @@ export interface GeologyFilterParams {
 }
 
 export const geologyApi = {
-  // Get features as GeoJSON
   getFeatures: (params?: GeologyFilterParams) => {
     return api.get<FeatureCollection>('/api/geology/list', { params }) as unknown as Promise<FeatureCollection>
   },
 
-  // Get stats for classification
   getStats: () => {
     return api.get<GeologyStats>('/api/geology/stats') as unknown as Promise<GeologyStats>
   },
 
-  // Export data
-  exportData: (format: 'excel' | 'csv' | 'shapefile', params?: GeologyFilterParams) => {
-    // We need to build the URL manually or use axios download
-    const queryParams = new URLSearchParams();
-    queryParams.append('format', format);
-    if (params) {
-      Object.entries(params).forEach(([key, value]) => {
-        if (value !== undefined && value !== null && value !== '') {
-            queryParams.append(key, String(value));
-        }
-      });
-    }
-    
-    // Construct absolute URL or relative
-    // Assuming api.defaults.baseURL is set or we use relative
-    const url = `/api/geology/export?${queryParams.toString()}`;
-    window.open(url, '_blank');
+  exportData: (format: 'excel' | 'csv' | 'shapefile' | 'markdown' | 'pdf', params?: GeologyFilterParams, srid: number = 4326) => {
+    return api.get('/api/geology/export', {
+      params: { ...params, format, srid },
+      responseType: 'blob',
+    }) as unknown as Promise<Blob>
+  },
+
+  exportDataByIds: (format: 'excel' | 'csv' | 'shapefile' | 'markdown' | 'pdf', ids: number[], srid: number = 4326) => {
+    return api.get('/api/geology/export', {
+      params: { format, ids: ids.join(','), srid },
+      responseType: 'blob'
+    }) as unknown as Promise<Blob>
+  },
+
+  fetchFeatureImageBlob: async (id: number) => {
+    const response = await downloadApi.get(`/api/geology/image/${id}`, {
+      responseType: 'blob'
+    })
+    return response as unknown as Blob
   }
 }

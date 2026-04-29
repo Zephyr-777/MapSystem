@@ -27,6 +27,12 @@ if [ ! -f ".env" ]; then
 fi
 
 # 启动服务
+echo "执行数据库迁移..."
+alembic upgrade head
+
+echo "确保默认管理员用户存在..."
+python create_test_user.py
+
 echo "启动服务..."
 # 排除 venv 目录，避免 WatchFiles 监听过多文件导致崩溃
-uvicorn main:app --reload --reload-exclude "venv/*" --port 9988
+uvicorn app.main:app --host 0.0.0.0 --reload --reload-exclude "venv/*" --port 9988

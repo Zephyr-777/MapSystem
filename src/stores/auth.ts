@@ -3,10 +3,20 @@ import { ref, computed } from 'vue'
 import { authApi, type LoginRequest, type RegisterRequest } from '@/api/auth'
 import router from '@/router'
 
+type UserRole = 'admin' | 'researcher' | 'guest'
+
+function normalizeRole(rawRole?: string): UserRole {
+  const role = (rawRole || '').toLowerCase()
+  if (role === 'admin' || role === 'administrator') return 'admin'
+  if (role === 'researcher') return 'researcher'
+  return 'guest'
+}
+
 export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = ref(false)
   const user = ref<{ id: number; username: string; email?: string; role?: string } | null>(null)
   const token = ref<string | null>(localStorage.getItem('token'))
+  const role = computed<UserRole>(() => normalizeRole(user.value?.role))
 
   // 初始化时检查 token
   if (token.value) {
@@ -74,10 +84,26 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  function hasRole(expected: UserRole) {
+    return role.value === expected
+  }
+
+  function hasAnyRole(expectedRoles: UserRole[]) {
+    return expectedRoles.includes(role.value)
+  }
+
+  const canManageUsers = computed(() => role.value === 'admin')
+  const canExportData = computed(() => hasAnyRole(['admin', 'researcher']))
+
   return {
     isAuthenticated: computed(() => isAuthenticated.value),
     user: computed(() => user.value),
     token: computed(() => token.value),
+    role,
+    canManageUsers,
+    canExportData,
+    hasRole,
+    hasAnyRole,
     login,
     register,
     logout,

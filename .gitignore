@@ -45,3 +45,16 @@ build/
 # Database
 *.db
 *.sqlite
+
+# Runtime/generated assets
+backend/app/storage/
+public/generated/
+.docx_render_check/
+paper_figures/output/
+
+# Local tooling
+.trae/
+
+# Thesis/source artifacts not needed in the code repo
+*.docx
+*.txt

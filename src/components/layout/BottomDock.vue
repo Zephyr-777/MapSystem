@@ -44,39 +44,11 @@
             <span class="indicator" v-if="activeTool === 'selection'"></span>
           </button>
         </el-tooltip>
-
-        <el-tooltip content="缓冲区分析" placement="top" :show-after="500">
-          <button 
-            class="dock-item"
-            :class="{ active: activeTool === 'buffer' }"
-            @click="$emit('toggle-buffer')"
-          >
-            <el-icon><Aim /></el-icon>
-            <span class="indicator" v-if="activeTool === 'buffer'"></span>
-          </button>
-        </el-tooltip>
-
-        <el-tooltip content="属性识别" placement="top" :show-after="500">
-          <button 
-            class="dock-item"
-            :class="{ active: activeTool === 'identify' }"
-            @click="$emit('toggle-identify')"
-          >
-            <el-icon><InfoFilled /></el-icon>
-            <span class="indicator" v-if="activeTool === 'identify'"></span>
-          </button>
-        </el-tooltip>
       </div>
 
       <div class="dock-divider"></div>
 
       <div class="dock-group">
-        <el-tooltip content="地质数据大厅" placement="top" :show-after="500">
-          <button class="dock-item" @click="$emit('open-geology-hall')">
-            <el-icon><DataBoard /></el-icon>
-          </button>
-        </el-tooltip>
-
         <el-tooltip content="共享大厅" placement="top" :show-after="500">
           <button class="dock-item" @click="$emit('open-gallery')">
             <el-icon><Grid /></el-icon>
@@ -110,12 +82,9 @@ import {
   Files, 
   ScaleToOriginal as Ruler,
   Crop, 
-  Aim, 
-  InfoFilled, 
   Grid, 
   Share as ShareIcon, 
-  UploadFilled,
-  DataBoard 
+  UploadFilled
 } from '@element-plus/icons-vue';
 
 const authStore = useAuthStore();

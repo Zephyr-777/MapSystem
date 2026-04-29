@@ -1,17 +1,18 @@
-# Vue Map - OpenLayers 集成项目
+# Vue Map
 
-这是一个基于 Vue 3 和 OpenLayers 的地图应用，包含登录注册功能和侧边栏布局。
+这是一个基于 Vue 3、OpenLayers 与 FastAPI 的地理数据管理平台，包含地图浏览、地质数据检索、上传解析、认证与统计分析能力。
 
 ## 功能特性
 
 - ✅ 用户登录和注册界面（参考 KnowledgeQuery 设计风格）
 - ✅ 侧边栏导航布局
-- ✅ OpenLayers 地图集成
+- ✅ OpenLayers 2D 地图
 - ✅ Vue Router 路由管理
 - ✅ Pinia 状态管理
 - ✅ Axios API 服务集成
 - ✅ JWT Token 认证
-- ✅ 数据库连接配置（后端 API）
+- ✅ PostgreSQL/PostGIS 空间数据支持
+- ✅ GeoTIFF / Shapefile / NetCDF 等地理数据处理
 
 ## 技术栈
 
@@ -20,9 +21,12 @@
 - **Vite** - 下一代前端构建工具
 - **Vue Router** - 官方路由管理器
 - **Pinia** - Vue 的状态管理库
-- **vue3-openlayers** - Vue 3 的 OpenLayers 组件库
 - **OpenLayers** - 高性能地图库
+
 - **Axios** - HTTP 客户端
+- **FastAPI** - 后端 API 框架
+- **SQLAlchemy** - ORM
+- **PostgreSQL + PostGIS** - 空间数据库
 
 ## 安装依赖
 
@@ -44,6 +48,12 @@ npm run dev
 npm run build
 ```
 
+## 测试命令
+
+```bash
+npm test
+```
+
 ## 项目结构
 
 ```
@@ -54,9 +64,8 @@ vue-map/
 │   │   ├── core/         # 核心配置
 │   │   ├── models/       # 数据库模型
 │   │   └── services/     # 业务服务
-│   ├── storage/          # 文件存储
-│   ├── database.py       # 数据库连接
-│   ├── main.py           # 入口文件
+│   ├── app/              # FastAPI 应用
+│   ├── tests/            # 后端测试
 │   └── requirements.txt  # Python 依赖
 ├── src/                  # 前端源码
 │   ├── api/              # API 服务
@@ -128,7 +137,7 @@ npm run dev
 
 ## 数据库连接
 
-后端使用 PostgreSQL 数据库，通过 SQLAlchemy ORM 进行数据库操作，并集成了 PostGIS 处理空间数据。
+后端使用 PostgreSQL 数据库，通过 SQLAlchemy ORM 进行数据库操作，并集成 PostGIS 处理空间数据。
 
 ### 数据库表结构
 
@@ -138,6 +147,12 @@ npm run dev
 - `file_path` - 相对存储路径
 - `extent` - 空间范围 (PostGIS Geometry)
 - `srid` - 坐标系 ID
+
+## 工程说明
+
+- 前端测试使用 `Vitest`
+- 后端测试使用 `pytest`
+- AI 智能分类与语义搜索依赖 `DASHSCOPE_API_KEY`，未配置时会自动降级为本地规则/模糊搜索
 
 ## 参考资源
 

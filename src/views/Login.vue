@@ -3,7 +3,10 @@
     <div class="auth-background"></div>
     <div class="auth-box glass-morphism">
       <div class="auth-header">
-        <h1 class="auth-title">GeoMap</h1>
+        <h1 class="auth-title">
+          <span class="auth-title-geo">Geo</span>
+          <span class="auth-title-map">Map</span>
+        </h1>
         <p class="auth-subtitle">探索地质数据的无限可能</p>
       </div>
       
@@ -146,16 +149,32 @@ const handleLogin = async () => {
 }
 
 .auth-title {
-  font-size: 28px;
-  font-weight: 700;
-  color: #1d1d1f;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  font-size: 34px;
+  font-weight: 800;
   margin-bottom: 8px;
-  letter-spacing: -0.5px;
+  letter-spacing: -1px;
+  line-height: 1;
+}
+
+.auth-title-geo {
+  color: #123154;
+}
+
+.auth-title-map {
+  background: linear-gradient(135deg, #0b73e0 0%, #4ba3ff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: 0 8px 22px rgba(11, 115, 224, 0.18);
 }
 
 .auth-subtitle {
-  color: #86868b;
+  color: #6f7e90;
   font-size: 15px;
+  letter-spacing: 0.5px;
 }
 
 .auth-form {

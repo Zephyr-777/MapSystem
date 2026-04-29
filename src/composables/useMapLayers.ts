@@ -1,8 +1,13 @@
 import { ref, shallowRef, watch } from 'vue';
 import TileLayer from 'ol/layer/Tile';
+import ImageLayer from 'ol/layer/Image';
+import WebGLTileLayer from 'ol/layer/WebGLTile';
+import type { Style as WebGLTileStyle } from 'ol/layer/WebGLTile';
 import VectorLayer from 'ol/layer/Vector';
 import HeatmapLayer from 'ol/layer/Heatmap';
 import XYZ from 'ol/source/XYZ';
+import ImageStatic from 'ol/source/ImageStatic';
+import GeoTIFF from 'ol/source/GeoTIFF';
 import OSM from 'ol/source/OSM';
 import VectorSource from 'ol/source/Vector';
 import Cluster from 'ol/source/Cluster';
@@ -28,12 +33,17 @@ const isFallbackActive = ref(false);
 export default function useMapLayers() {
   const { getMap } = useMapCore();
 
+  const getLayerById = (id: string) => layers.value.find((layer) => layer.get('id') === id);
+
   const clearLayers = () => {
     const map = getMap();
     if (map) {
       layers.value.forEach(layer => map.removeLayer(layer));
     }
     layers.value = [];
+    clusterStyleCache.clear();
+    tdtErrorCount.value = 0;
+    isFallbackActive.value = false;
   };
 
   const removeLayer = (id: string) => {
@@ -52,8 +62,7 @@ export default function useMapLayers() {
 
   const addTDTLayer = (type: 'vec' | 'img' | 'ter' | 'cva' | 'cia', token: string = TIANDITU_TK): TileLayer<XYZ> => {
     const id = `tdt-${type}`;
-    // Check if layer already exists
-    const existingLayer = layers.value.find(l => l.get('id') === id);
+    const existingLayer = getLayerById(id);
     if (existingLayer) {
         return existingLayer as TileLayer<XYZ>;
     }
@@ -92,6 +101,7 @@ export default function useMapLayers() {
     });
     
     layer.set('id', id);
+    layer.set('managedByActiveKeys', true);
     
     const map = getMap();
     if (map) {
@@ -102,6 +112,11 @@ export default function useMapLayers() {
   };
 
   const addOSMLayer = (): TileLayer<OSM> => {
+    const existingLayer = getLayerById('osm');
+    if (existingLayer) {
+      return existingLayer as TileLayer<OSM>;
+    }
+
     console.log('Adding OpenStreetMap layer as fallback');
     const layer = new TileLayer({
       source: new OSM({
@@ -113,6 +128,7 @@ export default function useMapLayers() {
       className: 'ol-layer-invertible',
     });
     layer.set('id', 'osm');
+    layer.set('managedByActiveKeys', true);
     const map = getMap();
     if (map) {
       map.addLayer(layer);
@@ -122,6 +138,11 @@ export default function useMapLayers() {
   };
 
   const addEsriSatelliteLayer = (): TileLayer<XYZ> => {
+    const existingLayer = getLayerById('esri-sat');
+    if (existingLayer) {
+      return existingLayer as TileLayer<XYZ>;
+    }
+
     console.log('Adding Esri World Imagery layer');
     const layer = new TileLayer({
       source: new XYZ({
@@ -132,6 +153,7 @@ export default function useMapLayers() {
       visible: activeLayerKeys.value.includes('esri-sat'),
     });
     layer.set('id', 'esri-sat');
+    layer.set('managedByActiveKeys', true);
     const map = getMap();
     if (map) {
       map.addLayer(layer);
@@ -270,11 +292,154 @@ export default function useMapLayers() {
     return layer;
   };
 
+  const addStaticImageOverlayLayer = (options: {
+    id: string
+    url: string
+    extent: [number, number, number, number]
+    opacity?: number
+    minZoom?: number
+    zIndex?: number
+    visible?: boolean
+  }): ImageLayer<ImageStatic> => {
+    const existingLayer = getLayerById(options.id);
+    if (existingLayer) {
+      const imageLayer = existingLayer as ImageLayer<ImageStatic>;
+      imageLayer.setSource(new ImageStatic({
+        url: options.url,
+        imageExtent: options.extent,
+        projection: 'EPSG:3857',
+        crossOrigin: 'anonymous',
+      }));
+      imageLayer.setOpacity(options.opacity ?? 0.75);
+      imageLayer.setMinZoom(options.minZoom ?? 8);
+      imageLayer.setVisible(options.visible ?? true);
+      imageLayer.setZIndex(options.zIndex ?? 900);
+      return imageLayer;
+    }
+
+    const layer = new ImageLayer({
+      source: new ImageStatic({
+        url: options.url,
+        imageExtent: options.extent,
+        projection: 'EPSG:3857',
+        crossOrigin: 'anonymous',
+      }),
+      zIndex: options.zIndex ?? 900,
+      opacity: options.opacity ?? 0.75,
+      visible: options.visible ?? true,
+      minZoom: options.minZoom ?? 8,
+    });
+
+    layer.set('id', options.id);
+    const map = getMap();
+    if (map) {
+      map.addLayer(layer);
+      layers.value = [...layers.value, layer];
+    }
+    return layer;
+  };
+
+  const addGeoTiffOverlayLayer = (options: {
+    id: string
+    url: string
+    opacity?: number
+    minZoom?: number
+    maxZoom?: number
+    zIndex?: number
+    visible?: boolean
+    nodata?: number
+    bandCount?: number
+    rasterMin?: number
+    rasterMax?: number
+    colorRamp?: 'terrain' | 'carbon'
+    token?: string | null
+    extent?: [number, number, number, number]
+  }): WebGLTileLayer => {
+    const effectiveMinZoom = (options.minZoom ?? 3) - 0.01;
+    const isSingleBand = (options.bandCount ?? 1) === 1;
+    const colorRamp = options.colorRamp ?? 'terrain';
+    const sourceInfo = {
+      url: options.url,
+      ...(typeof options.nodata === 'number' ? { nodata: options.nodata } : {}),
+      ...(typeof options.rasterMin === 'number' ? { min: options.rasterMin } : {}),
+      ...(typeof options.rasterMax === 'number' ? { max: options.rasterMax } : {}),
+    };
+    const singleBandStyle: WebGLTileStyle | undefined = isSingleBand
+      ? {
+          color: [
+            'interpolate',
+            ['linear'],
+            ['band', 1],
+            0,
+            colorRamp === 'carbon' ? 'rgba(255,255,255,0)' : '#233b2d',
+            0.28,
+            colorRamp === 'carbon' ? '#d7e9b1' : '#4f6f38',
+            0.52,
+            colorRamp === 'carbon' ? '#82b35c' : '#b59b54',
+            0.74,
+            colorRamp === 'carbon' ? '#2f7a44' : '#e2d7bd',
+            1,
+            colorRamp === 'carbon' ? '#08351e' : '#ffffff',
+          ],
+          contrast: colorRamp === 'carbon' ? 0.08 : 0.12,
+          saturation: colorRamp === 'carbon' ? 0.25 : 0.15,
+        }
+      : undefined;
+    const source = new GeoTIFF({
+      sources: [sourceInfo],
+      sourceOptions: {
+        headers: options.token ? { Authorization: `Bearer ${options.token}` } : undefined,
+        maxRanges: 1,
+      },
+      convertToRGB: 'auto',
+      normalize: true,
+      transition: 0,
+      wrapX: false,
+    });
+
+    const existingLayer = getLayerById(options.id);
+    if (existingLayer) {
+      const tileLayer = existingLayer as WebGLTileLayer;
+      tileLayer.setSource(source as any);
+      tileLayer.setOpacity(options.opacity ?? 0.75);
+      tileLayer.setMinZoom(effectiveMinZoom);
+      tileLayer.setMaxZoom(options.maxZoom ?? Infinity);
+      tileLayer.setVisible(options.visible ?? true);
+      tileLayer.setZIndex(options.zIndex ?? 910);
+      tileLayer.setExtent(options.extent);
+      if (singleBandStyle) {
+        tileLayer.setStyle(singleBandStyle);
+      }
+      return tileLayer;
+    }
+
+    const layer = new WebGLTileLayer({
+      source: source as any,
+      zIndex: options.zIndex ?? 910,
+      opacity: options.opacity ?? 0.75,
+      visible: options.visible ?? true,
+      minZoom: effectiveMinZoom,
+      maxZoom: options.maxZoom ?? Infinity,
+      extent: options.extent,
+      style: singleBandStyle,
+      preload: 1,
+    });
+
+    layer.set('id', options.id);
+    layer.set('sourceKind', 'geotiff');
+    const map = getMap();
+    if (map) {
+      map.addLayer(layer);
+      layers.value = [...layers.value, layer];
+    }
+    return layer;
+  };
+
   // Watch activeLayerKeys to toggle visibility
   watch(activeLayerKeys, (keys) => {
     layers.value.forEach(layer => {
       const id = layer.get('id');
-      if (id) {
+      if (id && layer.get('managedByActiveKeys')) {
         layer.setVisible(keys.includes(id));
       }
     });
@@ -289,6 +454,8 @@ export default function useMapLayers() {
     addNavigationLayer,
     addClusterLayer,
     addHeatmapLayer,
+    addStaticImageOverlayLayer,
+    addGeoTiffOverlayLayer,
     removeLayer,
     clearLayers,
     isFallbackActive,

@@ -19,6 +19,7 @@
         type="file" 
         ref="fileInputRef" 
         multiple 
+        :accept="ACCEPTED_EXTENSIONS"
         style="display: none" 
         @change="handleFileChange"
       >
@@ -27,9 +28,33 @@
       </div>
       <div class="upload-text">
         <h3 class="primary-text">拖拽文件到这里</h3>
-        <p class="secondary-text">支持 ZIP, NC, CSV, GeoJSON</p>
+        <p class="secondary-text">支持 GeoTIFF、Shapefile、NetCDF、CSV、GeoJSON、图片和文档</p>
         <el-button type="primary" round size="small" class="select-btn">或者选择文件</el-button>
       </div>
+    </div>
+
+    <div class="format-panel">
+      <div class="format-title">统一资源入库</div>
+      <div class="format-tags">
+        <span v-for="item in supportedFormats" :key="item" class="format-tag">{{ item }}</span>
+      </div>
+      <p class="format-note">
+        Shapefile 请同时上传同名 .shp、.shx、.dbf 文件，或打包为 ZIP 上传。
+      </p>
+    </div>
+
+    <div class="meta-form">
+      <label class="meta-label" for="upload-description">资源描述</label>
+      <el-input
+        id="upload-description"
+        v-model="description"
+        type="textarea"
+        :rows="3"
+        maxlength="300"
+        show-word-limit
+        placeholder="可填写数据来源、研究区域、时间范围或使用说明，入库后会写入 GeoAsset 描述字段"
+        :disabled="uploading"
+      />
     </div>
 
     <!-- File List -->
@@ -68,6 +93,19 @@ import { UploadFilled, Document, Close } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { geoDataApi } from '@/api/geodata';
 
+const ACCEPTED_EXTENSIONS = [
+  '.tif', '.tiff', '.tfw',
+  '.shp', '.shx', '.dbf', '.prj', '.cpg', '.sbn', '.sbx', '.xml',
+  '.geojson', '.json', '.kml', '.gpx',
+  '.nc', '.nc4',
+  '.csv', '.txt', '.xlsx', '.xls',
+  '.jpg', '.jpeg', '.png', '.webp',
+  '.pdf', '.doc', '.docx',
+  '.zip'
+].join(',');
+
+const supportedFormats = ['GeoTIFF', 'Shapefile', 'NetCDF', 'CSV/Excel', 'GeoJSON/KML', '图片/文档', 'ZIP 数据包'];
+
 const props = defineProps<{
   modelValue: boolean
 }>();
@@ -88,6 +126,7 @@ const files = ref<File[]>([]);
 const uploading = ref(false);
 const progress = ref(0);
 const statusText = ref('');
+const description = ref('');
 
 const progressStatus = computed(() => {
   if (progress.value === 100) return 'success';
@@ -98,7 +137,7 @@ const progressStatus = computed(() => {
 const triggerFileInput = () => {
   if (uploading.value) return;
   if (fileInputRef.value) {
-    fileInputRef.value.accept = ".zip,.nc,.csv,.geojson";
+    fileInputRef.value.accept = ACCEPTED_EXTENSIONS;
     fileInputRef.value.click();
   }
 };
@@ -120,7 +159,19 @@ const handleDrop = (e: DragEvent) => {
 };
 
 const addFiles = (newFiles: File[]) => {
-  files.value = [...files.value, ...newFiles];
+  const allowedExts = new Set(ACCEPTED_EXTENSIONS.split(','));
+  const acceptedFiles = newFiles.filter((file) => {
+    const suffix = `.${file.name.split('.').pop()?.toLowerCase() || ''}`;
+    return allowedExts.has(suffix);
+  });
+
+  if (acceptedFiles.length !== newFiles.length) {
+    ElMessage.warning('已过滤不支持的文件格式');
+  }
+
+  const nextFiles = [...files.value, ...acceptedFiles];
+  files.value = nextFiles;
+  warnIfShapefileIncomplete(nextFiles);
 };
 
 const removeFile = (index: number) => {
@@ -150,7 +201,15 @@ const startUpload = async () => {
   }, 200);
 
   try {
-    const res = await geoDataApi.upload(files.value);
+    const formData = new FormData();
+    files.value.forEach(file => {
+      formData.append('files', file);
+    });
+    if (description.value.trim()) {
+      formData.append('description', description.value.trim());
+    }
+
+    const res = await geoDataApi.upload(formData);
     
     clearInterval(progressInterval);
     progress.value = 100;
@@ -170,7 +229,7 @@ const startUpload = async () => {
     if (data.errors && data.errors.length > 0) {
        ElMessage.warning(`部分文件处理失败: ${data.errors.join('; ')}`);
     } else {
-       ElMessage.success('文件全部上传成功');
+       ElMessage.success(data.message || '文件全部上传成功');
     }
     
     // Find the first valid asset to fly to
@@ -190,7 +249,8 @@ const startUpload = async () => {
     clearInterval(progressInterval);
     progress.value = 0; // Reset or show error status
     statusText.value = '上传失败';
-    ElMessage.error(e.message || '上传失败');
+    const message = e?.response?.data?.detail || e?.message || '上传失败';
+    ElMessage.error(message);
     console.error(e);
   } finally {
     uploading.value = false;
@@ -201,6 +261,28 @@ const handleClosed = () => {
   files.value = [];
   progress.value = 0;
   statusText.value = '';
+  description.value = '';
+};
+
+const warnIfShapefileIncomplete = (currentFiles: File[]) => {
+  const namesByStem = new Map<string, Set<string>>();
+  currentFiles.forEach((file) => {
+    const dotIndex = file.name.lastIndexOf('.');
+    if (dotIndex <= 0) return;
+    const stem = file.name.slice(0, dotIndex);
+    const ext = file.name.slice(dotIndex).toLowerCase();
+    if (!namesByStem.has(stem)) {
+      namesByStem.set(stem, new Set());
+    }
+    namesByStem.get(stem)?.add(ext);
+  });
+
+  for (const [stem, exts] of namesByStem.entries()) {
+    if (exts.has('.shp') && (!exts.has('.shx') || !exts.has('.dbf'))) {
+      ElMessage.warning(`Shapefile「${stem}」还缺少 .shx 或 .dbf 附属文件`);
+      break;
+    }
+  }
 };
 </script>
 
@@ -276,6 +358,56 @@ const handleClosed = () => {
 .select-btn {
   margin-top: 10px;
   padding: 8px 24px;
+}
+
+.format-panel {
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(64, 158, 255, 0.1), rgba(103, 194, 58, 0.08));
+  border: 1px solid rgba(64, 158, 255, 0.16);
+}
+
+.format-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f2f46;
+  margin-bottom: 10px;
+}
+
+.format-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.format-tag {
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1677d2;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(64, 158, 255, 0.18);
+}
+
+.format-note {
+  margin: 12px 0 0;
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.meta-form {
+  margin-top: 18px;
+}
+
+.meta-label {
+  display: block;
+  margin-bottom: 8px;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .file-list {

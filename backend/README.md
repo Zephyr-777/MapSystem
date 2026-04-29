@@ -1,22 +1,24 @@
 # Vue Map 后端 API
 
-基于 FastAPI 的后端服务，提供用户认证和数据库连接功能。
+基于 FastAPI 的后端服务，提供用户认证、空间数据管理、地质要素检索与文件上传处理功能。
 
 ## 功能特性
 
 - ✅ FastAPI 框架
-- ✅ MySQL 数据库连接
+- ✅ PostgreSQL / PostGIS 数据库连接
 - ✅ SQLAlchemy ORM
 - ✅ 用户注册和登录
 - ✅ JWT Token 认证
-- ✅ 密码加密（bcrypt）
+- ✅ GeoTIFF / Shapefile / NetCDF 元数据处理
+- ✅ 密码加密（pbkdf2_sha256，兼容 bcrypt）
 - ✅ CORS 支持
 
 ## 技术栈
 
 - **FastAPI** - 现代、快速的 Web 框架
 - **SQLAlchemy** - Python SQL 工具包和 ORM
-- **PyMySQL** - MySQL 数据库驱动
+- **psycopg2** - PostgreSQL 数据库驱动
+- **PostGIS** - 空间扩展
 - **python-jose** - JWT 令牌处理
 - **passlib** - 密码哈希和验证
 - **python-dotenv** - 环境变量管理
@@ -30,11 +32,13 @@ pip install -r requirements.txt
 
 ## 数据库配置
 
-1. 确保 MySQL 服务正在运行
+1. 确保 PostgreSQL 与 PostGIS 服务正在运行
 
 2. 创建数据库：
 ```sql
-CREATE DATABASE vue_map_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE vue_map_db;
+\c vue_map_db
+CREATE EXTENSION postgis;
 ```
 
 3. 复制环境变量文件：
@@ -43,22 +47,17 @@ cp .env.example .env
 ```
 
 4. 编辑 `.env` 文件，配置数据库连接信息：
-```
-MYSQL_HOST=localhost
-MYSQL_PORT=3306
-MYSQL_USER=root
-MYSQL_PASSWORD=your_mysql_password
-MYSQL_DATABASE=vue_map_db
-
+```env
+DATABASE_URL=postgresql://username:password@localhost:5432/vue_map_db
 SECRET_KEY=your-secret-key-change-this-in-production
+BACKEND_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
 ## 运行服务
 
 ```bash
 # 开发模式（自动重载）
-# 确保在 backend 目录下执行
-uvicorn main:app --reload --port 9988
+uvicorn app.main:app --reload --port 9988
 ```
 
 或者使用启动脚本：
@@ -80,7 +79,6 @@ uvicorn main:app --reload --port 9988
 ### 认证相关
 
 - `POST /api/auth/register` - 用户注册
-- `POST /api/auth/login` - 用户登录（OAuth2 格式）
 - `POST /api/auth/login/json` - 用户登录（JSON 格式）
 - `GET /api/auth/me` - 获取当前用户信息（需要认证）
 
@@ -121,6 +119,12 @@ curl -X GET "http://localhost:9988/api/auth/me" \
   -H "Authorization: Bearer YOUR_TOKEN_HERE"
 ```
 
+## 测试
+
+```bash
+pytest
+```
+
 ## 数据库模型
 
 ### User 表
@@ -136,6 +140,6 @@ curl -X GET "http://localhost:9988/api/auth/me" \
 ## 注意事项
 
 1. 生产环境中请务必修改 `SECRET_KEY` 为强随机字符串
-2. 确保数据库用户有足够的权限创建表和插入数据
-3. 建议在生产环境中使用环境变量管理敏感信息
-4. 可以考虑添加更多的安全措施，如速率限制、IP 白名单等
+2. 确保数据库用户有足够的权限创建扩展、建表和写入数据
+3. 建议通过环境变量配置 `DATABASE_URL`、`SECRET_KEY` 与 `BACKEND_CORS_ORIGINS`
+4. 未配置 `DASHSCOPE_API_KEY` 时，智能分类与智能搜索会自动降级为本地规则逻辑

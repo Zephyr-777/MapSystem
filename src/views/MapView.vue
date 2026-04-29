@@ -2,13 +2,6 @@
   <div class="map-view-container">
     <ErrorBoundary>
       <MapContainer ref="mapContainerRef" :map-instance="map">
-        <!-- Cesium 3D Container (Overlay) -->
-        <CesiumContainer 
-          v-if="mapReady"
-          :visible="is3DActive"
-          :view-state="viewState"
-          :features="rawFeatures"
-        />
 
         <!-- Swipe Control -->
         <div v-if="isSwipeActive" class="swipe-control-container">
@@ -26,36 +19,58 @@
         <div ref="mouseTooltipRef" class="mouse-tooltip" v-show="tooltipContent">
           {{ tooltipContent }}
         </div>
-        
-        <!-- Result Popover Overlay (Only for non-feature clicks if needed, or simple POIs) -->
-        <div ref="popupRef" class="map-popup-overlay">
-          <div v-if="popupInfo" class="popup-content glass-panel">
-            <div class="popup-header">
-              <span class="popup-title">{{ popupInfo.name }}</span>
-              <el-button link class="close-btn" @click="closePopup">
-                <el-icon><Close /></el-icon>
+
+        <aside class="map-hall-panel glass-panel">
+          <div class="map-hall-header">
+            <h2>地质数据大厅</h2>
+            <el-dropdown @command="handleHallExport">
+              <el-button type="primary" link>
+                导出数据 <el-icon class="el-icon--right"><Download /></el-icon>
               </el-button>
-            </div>
-            <div class="popup-body">
-              <div v-if="popupInfo.address" class="popup-address">
-                <el-icon><LocationInformation /></el-icon>
-                {{ popupInfo.address }}
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="csv">Excel 兼容 CSV</el-dropdown-item>
+                  <el-dropdown-item command="json">目录元数据 JSON</el-dropdown-item>
+                  <el-dropdown-item command="markdown">目录报告 Markdown</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
+
+          <div class="map-hall-modules custom-scrollbar">
+            <div
+              v-for="group in hallCatalogGroups"
+              :key="group.id"
+              class="map-hall-section"
+            >
+              <button class="map-hall-section-title" type="button">
+                <span>{{ group.label }}</span>
+                <span class="map-hall-section-count">{{ group.items.length }}</span>
+              </button>
+              <div class="map-hall-list">
+                <button
+                  v-for="item in group.items"
+                  :key="item.id"
+                  class="map-hall-entry"
+                  @click="openCatalogDataset(item.id)"
+                >
+                  <div class="map-hall-entry-main">
+                    <span class="map-hall-entry-title">{{ item.title }}</span>
+                    <span class="map-hall-entry-region">{{ getCatalogRegionLabel(item.id) }}</span>
+                  </div>
+                  <div class="map-hall-entry-meta">
+                    <span>{{ getCatalogSourceLabel(item.sourceId) }}</span>
+                    <span v-if="item.statusLabel">{{ item.statusLabel }}</span>
+                  </div>
+                </button>
               </div>
-              <div class="popup-actions">
-                <el-button type="primary" size="small" round @click="handleSetCenter(popupInfo)">
-                  设为中心
-                </el-button>
-                <el-button size="small" round @click="handleDetail(popupInfo)">
-                  查看详情
-                </el-button>
-              </div>
-            </div>
-            <!-- Ripple Effect -->
-            <div class="ripple-container">
-               <div class="ripple"></div>
             </div>
           </div>
-        </div>
+
+          <div class="map-hall-summary">
+            <span>共 {{ hallCatalogGroups.length }} 类 / {{ hallCatalogItems.length }} 条数据</span>
+          </div>
+        </aside>
 
         <!-- Bottom Right Controls: Zoom & Location -->
         <div class="bottom-right-controls">
@@ -116,6 +131,13 @@
         <span style="margin-left: 10px">正在初始化地图...</span>
       </div>
 
+      <div v-if="mapReady && isMapDataLoading" class="map-data-loading-overlay">
+        <div class="map-data-loading-card glass-panel">
+          <el-icon class="is-loading" :size="20"><Loading /></el-icon>
+          <span>正在加载当前视野数据...</span>
+        </div>
+      </div>
+
       <div v-if="initError" class="loading-overlay error-state">
         <el-empty description="地图加载失败" :image-size="100">
           <template #description>
@@ -125,24 +147,43 @@
         </el-empty>
       </div>
 
-      <div v-if="mapReady">
+        <div v-if="mapReady">
         <div class="top-search-container">
           <SmartSearchBox 
             @search-result="handleSmartSearchResult"
           />
         </div>
 
-        <div class="top-right-controls">
-          <el-tooltip content="3D 预览" placement="left">
-            <button 
-              class="control-btn" 
-              :class="{ active: is3DActive }"
-              @click="toggle3D"
-            >
-              <el-icon><Monitor /></el-icon>
-            </button>
-          </el-tooltip>
+        <div v-if="heiheQuickLocateVisible" class="left-overview-panel">
+          <button class="heihe-locate-btn" @click="handleQuickLocateHeihe">
+            快速定位黑河下游
+          </button>
         </div>
+
+        <div v-if="forestCarbonOverlay" class="forest-carbon-panel glass-panel">
+          <div class="forest-carbon-title">森林碳储量</div>
+          <div class="forest-carbon-controls">
+            <el-select v-model="forestCarbonMetric" size="small" class="carbon-select" @change="handleForestCarbonChange">
+              <el-option
+                v-for="metric in forestCarbonOverlay.metrics"
+                :key="metric.id"
+                :label="metric.label"
+                :value="metric.id"
+              />
+            </el-select>
+            <el-select v-model="forestCarbonYear" size="small" class="year-select" @change="handleForestCarbonChange">
+              <el-option
+                v-for="year in forestCarbonOverlay.years"
+                :key="year"
+                :label="`${year}`"
+                :value="year"
+              />
+            </el-select>
+          </div>
+          <div class="forest-carbon-meta">{{ forestCarbonOverlay.unit }} · {{ forestCarbonOverlay.metric }}</div>
+        </div>
+
+
 
         <Transition name="fade-slide">
           <LayerControl 
@@ -166,6 +207,7 @@
             @close="closeSidePanel"
             @download="handleDownload"
             @locate="locateItem"
+            @share="handleShareFeature"
             @visualize-nc="handleVisualizeNetCDF"
           />
         </Transition>
@@ -189,25 +231,46 @@
 import { ref, onMounted, onUnmounted, shallowRef, nextTick, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
-import { geoDataApi, type GeoDataItem } from '@/api/geodata';
+import { useGeodataStore } from '@/stores/geodata';
+import { useMapStore } from '@/stores/map';
+import {
+  geoDataApi,
+  type GeoDataItem,
+  type LocalRasterOverlay,
+  type ForestCarbonOverlay,
+  type SouthwestTemperatureDataset,
+  type CentralAsiaDesertGeoJSONResponse,
+  type BadalingImageryDataset
+} from '@/api/geodata';
 import { ElMessage, ElNotification, ElMessageBox } from 'element-plus';
-import { Location, Loading, Plus, Minus, RefreshRight, Close, LocationInformation, SwitchButton, Monitor } from '@element-plus/icons-vue';
-import type Map from 'ol/Map';
+import { Location, Loading, Plus, Minus, RefreshRight, SwitchButton, Download } from '@element-plus/icons-vue';
+import type OLMap from 'ol/Map';
 import type { LayerConfig } from '@/views/map/types/map';
 import useMapCore from '@/composables/useMapCore';
 import useMapLayers from '@/composables/useMapLayers';
 import useMapInteractions from '@/composables/useMapInteractions';
 import VectorSource from 'ol/source/Vector';
+import Cluster from 'ol/source/Cluster';
+import VectorLayer from 'ol/layer/Vector';
 import Feature from 'ol/Feature';
 import Point from 'ol/geom/Point';
+import GeoJSON from 'ol/format/GeoJSON';
 import { fromLonLat, toLonLat, transformExtent } from 'ol/proj';
-import { Style, Fill, Stroke, Circle as CircleStyle, RegularShape } from 'ol/style';
-import VectorLayer from 'ol/layer/Vector';
-import Overlay from 'ol/Overlay';
-import { Circle as CircleGeom } from 'ol/geom';
-import { getRenderPixel } from 'ol/render';
-import TileLayer from 'ol/layer/Tile';
-import HeatmapLayer from 'ol/layer/Heatmap';
+import { Style, Fill, Stroke, Circle as CircleStyle, Text } from 'ol/style';
+import { toMapCoords, createHighlightLayer, createBufferLayer } from '@/services/mapInteraction';
+import {
+    catalogDataTypes,
+    catalogItems,
+    catalogSources,
+    findCatalogItem,
+    findCatalogRegion,
+    getCatalogItemRegion,
+    type CatalogSourceId,
+} from '@/config/geodataCatalog';
+
+
+
+
 
 // Components
 import ErrorBoundary from '@/components/ErrorBoundary.vue';
@@ -216,21 +279,22 @@ import SmartSearchBox from '@/views/map/components/SmartSearchBox.vue';
 import BottomDock from '@/components/layout/BottomDock.vue';
 import LayerControl from '@/views/map/components/LayerControl.vue';
 import InfoPanel from '@/views/map/components/InfoPanel.vue';
-import StatsPanel from '@/views/map/components/StatsPanel.vue';
 import UploadDialog from '@/views/map/components/UploadDialog.vue';
-import CesiumContainer from '@/views/map/components/CesiumContainer.vue';
+import StatsPanel from '@/views/map/components/StatsPanel.vue';
 
-import { getDistance } from 'ol/sphere';
+
 
 // Composables
 const { initMap, mapReady } = useMapCore();
-const { addOSMLayer, addEsriSatelliteLayer, addTDTLayer, addNavigationLayer, addClusterLayer, addHeatmapLayer, removeLayer, activeLayerKeys, clearLayers, layers } = useMapLayers();
-const { initInteractions, toggleDragBox, isDragBoxActive, selectedExtent, clearSelection: clearInteractions, initTooltip, flyTo, removeInteractions, selectedItems, startDrawing, stopDrawing } = useMapInteractions();
+const { addOSMLayer, addEsriSatelliteLayer, addTDTLayer, addNavigationLayer, addClusterLayer, addHeatmapLayer, addGeoTiffOverlayLayer, removeLayer, activeLayerKeys, clearLayers, layers } = useMapLayers();
+const { initInteractions, toggleDragBox, isDragBoxActive, initTooltip, flyTo, removeInteractions, selectedItems, startDrawing, stopDrawing } = useMapInteractions();
 
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
-const map = shallowRef<Map | null>(null);
+const geodataStore = useGeodataStore();
+const mapStore = useMapStore();
+const map = shallowRef<OLMap | null>(null);
 const mapContainerRef = ref<any>(null);
 
 // State
@@ -239,7 +303,9 @@ const initError = ref(false);
 const errorMessage = ref('');
 const showLayerPanel = ref(false);
 const sidePanelVisible = ref(false);
-const showAttributeDashboard = ref(true); // Now controlled by StatsPanel trigger
+const mapDataLoadingCount = ref(0);
+const isMapDataLoading = computed(() => mapDataLoadingCount.value > 0);
+
 const currentFeature = ref<GeoDataItem | null>(null);
 const showUploadDialog = ref(false);
 const locating = ref(false);
@@ -248,14 +314,617 @@ const isSwipeActive = ref(false);
 const swipeValue = ref(50);
 const mouseTooltipRef = ref<HTMLElement | null>(null);
 
-// 3D Mode State
-const is3DActive = ref(false);
-const rawFeatures = ref<any[]>([]);
-const viewState = ref({
-    center: [116.3974, 39.9093] as [number, number],
-    zoom: 10,
-    extent: undefined as [number, number, number, number] | undefined
+
+const localRasterOverlays = ref<LocalRasterOverlay[]>([]);
+const hasAutoFocusedLocalOverlay = ref(false);
+const forestCarbonOverlay = ref<ForestCarbonOverlay | null>(null);
+const forestCarbonMetric = ref<'AGBC' | 'BGBC'>('AGBC');
+const forestCarbonYear = ref(2021);
+const lastDataBBoxKey = ref('');
+const southwestTemperatureDataset = ref<SouthwestTemperatureDataset | null>(null);
+const badalingImageryDataset = ref<BadalingImageryDataset | null>(null);
+const hepingjieImageryDataset = ref<BadalingImageryDataset | null>(null);
+const centralAsiaCountriesSource = new VectorSource();
+const centralAsiaUrbanPolygonSource = new VectorSource();
+const centralAsiaUrbanPointSource = new VectorSource();
+const centralAsiaUrbanPointClusterSource = new Cluster({
+  distance: 72,
+  minDistance: 24,
+  source: centralAsiaUrbanPointSource,
 });
+let centralAsiaCountriesLayer: VectorLayer<VectorSource> | null = null;
+let centralAsiaUrbanPolygonLayer: VectorLayer<VectorSource> | null = null;
+let centralAsiaUrbanPointLayer: VectorLayer<Cluster> | null = null;
+const centralAsiaGeoJSON = new GeoJSON();
+const centralAsiaDatasetBBox = ref<[number, number, number, number] | null>(null);
+const centralAsiaSelectedId = ref<string | number | null>(null);
+const centralAsiaPolygonBBoxKey = ref('');
+const centralAsiaPointBBoxKey = ref('');
+const CENTRAL_ASIA_POINT_MIN_ZOOM = 8;
+const CENTRAL_ASIA_POLYGON_MIN_ZOOM = 10;
+const BADALING_IMAGERY_LAYER_PREFIX = 'badaling-imagery';
+const HEPINGJIE_IMAGERY_LAYER_PREFIX = 'hepingjie-imagery';
+
+const getLocalRasterLayerId = (overlayId: string) => `local-raster-${overlayId}`;
+const getLocalRasterLayerKey = (overlayId: string) => `localRaster_${overlayId}`;
+const getOverlayIdFromLayerKey = (key: string) =>
+  key.startsWith('localRaster_') ? key.slice('localRaster_'.length) : null;
+const FOREST_CARBON_LAYER_ID = 'forest-carbon-raster';
+const getBadalingLayerId = (level: number, tileId: string) => `${BADALING_IMAGERY_LAYER_PREFIX}-${level}-${tileId}`;
+const getHepingjieLayerId = (level: number, tileId: string) => `${HEPINGJIE_IMAGERY_LAYER_PREFIX}-${level}-${tileId}`;
+
+const beginMapLoading = () => {
+    mapDataLoadingCount.value += 1;
+};
+
+const endMapLoading = () => {
+    mapDataLoadingCount.value = Math.max(0, mapDataLoadingCount.value - 1);
+};
+
+const withMapLoading = async <T,>(task: () => Promise<T>) => {
+    beginMapLoading();
+    try {
+        return await task();
+    } finally {
+        endMapLoading();
+    }
+};
+
+const getCurrentMapBBox = (): [number, number, number, number] | undefined => {
+    if (!map.value) return undefined;
+    const size = map.value.getSize();
+    if (!size) return undefined;
+    const extent = map.value.getView().calculateExtent(size);
+    return transformExtent(extent, 'EPSG:3857', 'EPSG:4326') as [number, number, number, number];
+};
+
+const buildBBoxKey = (bbox?: [number, number, number, number]) =>
+    bbox ? bbox.map((value) => value.toFixed(2)).join(',') : '';
+
+const hallCatalogItems = computed(() => catalogItems);
+const hallCatalogGroups = computed(() =>
+    catalogDataTypes
+        .map((type) => ({
+            ...type,
+            items: hallCatalogItems.value.filter((item) => item.dataTypeId === type.id),
+        }))
+        .filter((group) => group.items.length > 0)
+);
+
+const getCatalogRegionLabel = (catalogId: string) => {
+    const item = findCatalogItem(catalogId);
+    const region = item ? getCatalogItemRegion(item) : undefined;
+    return region?.shortName || '专题数据';
+};
+
+const getCatalogTypeLabel = (catalogId: string) => {
+    const item = findCatalogItem(catalogId);
+    return catalogDataTypes.find((entry) => entry.id === item?.dataTypeId)?.label || '专题数据';
+};
+
+const getCatalogSourceLabel = (sourceId?: CatalogSourceId) =>
+    catalogSources.find((entry) => entry.id === sourceId)?.label || '平台数据';
+
+const openCatalogDataset = (catalogId: string) => {
+    const item = findCatalogItem(catalogId);
+    if (!item) return;
+
+    enableCatalogLayers(item.id);
+    fitCatalogRegion(item.regionId);
+    ElMessage.success(`已定位到：${item.title}`);
+
+    router.replace({
+        name: 'Map',
+        query: {
+            ...route.query,
+            catalog: item.id,
+            layer: item.id,
+            region: item.regionId,
+        },
+    });
+};
+
+const catalogExportRows = computed(() =>
+    hallCatalogItems.value.map((item) => {
+        const region = getCatalogItemRegion(item);
+        return {
+            id: item.id,
+            title: item.title,
+            type: getCatalogTypeLabel(item.id),
+            source: getCatalogSourceLabel(item.sourceId),
+            region: region?.name || '',
+            status: item.statusLabel || '',
+            tags: item.tags.join('、'),
+            description: item.description,
+        };
+    })
+);
+
+const escapeCsvCell = (value: unknown) => {
+    const text = String(value ?? '');
+    return `"${text.replace(/"/g, '""')}"`;
+};
+
+const downloadTextFile = (content: string, filename: string, type: string) => {
+    const blob = new Blob([content], { type });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+};
+
+const buildCatalogCsv = () => {
+    const headers = ['ID', '名称', '数据类型', '来源', '区域', '状态', '标签', '描述'];
+    const rows = catalogExportRows.value.map((row) => [
+        row.id,
+        row.title,
+        row.type,
+        row.source,
+        row.region,
+        row.status,
+        row.tags,
+        row.description,
+    ]);
+    return [headers, ...rows].map((row) => row.map(escapeCsvCell).join(',')).join('\n');
+};
+
+const buildCatalogMarkdown = () => {
+    const lines = [
+        '# 地质数据大厅目录',
+        '',
+        `导出时间：${new Date().toLocaleString()}`,
+        '',
+        `共 ${hallCatalogGroups.value.length} 类 / ${hallCatalogItems.value.length} 条数据。`,
+        '',
+    ];
+
+    hallCatalogGroups.value.forEach((group) => {
+        lines.push(`## ${group.label}`, '');
+        group.items.forEach((item) => {
+            const region = getCatalogItemRegion(item);
+            lines.push(`- ${item.title}`);
+            lines.push(`  - 区域：${region?.name || '-'}`);
+            lines.push(`  - 来源：${getCatalogSourceLabel(item.sourceId)}`);
+            lines.push(`  - 状态：${item.statusLabel || '-'}`);
+            lines.push(`  - 描述：${item.description}`);
+        });
+        lines.push('');
+    });
+
+    return lines.join('\n');
+};
+
+const handleHallExport = (format: string) => {
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+
+    if (format === 'json') {
+        downloadTextFile(
+            JSON.stringify(catalogExportRows.value, null, 2),
+            `geology-catalog-${timestamp}.json`,
+            'application/json;charset=utf-8'
+        );
+    } else if (format === 'markdown') {
+        downloadTextFile(
+            buildCatalogMarkdown(),
+            `geology-catalog-${timestamp}.md`,
+            'text/markdown;charset=utf-8'
+        );
+    } else {
+        downloadTextFile(
+            `\ufeff${buildCatalogCsv()}`,
+            `geology-catalog-${timestamp}.csv`,
+            'text/csv;charset=utf-8'
+        );
+    }
+
+    ElMessage.success('地质数据大厅目录已导出');
+};
+
+const bboxIntersects = (
+    a?: [number, number, number, number] | null,
+    b?: [number, number, number, number] | null
+) => {
+    if (!a || !b) return false;
+    return !(a[2] < b[0] || a[0] > b[2] || a[3] < b[1] || a[1] > b[3]);
+};
+
+
+
+const fitLocalOverlay = (overlay: LocalRasterOverlay, duration = 1200) => {
+    if (!map.value) return;
+    const imageExtent = transformExtent(overlay.extent, 'EPSG:4326', 'EPSG:3857');
+    map.value.getView().fit(imageExtent, {
+        padding: [80, 80, 80, 80],
+        duration,
+        maxZoom: 7,
+    });
+};
+
+const fitCatalogRegion = (regionId?: string, duration = 1000) => {
+    if (!map.value || !regionId) return false;
+    const region = findCatalogRegion(regionId);
+    if (!region) return false;
+    const extent = transformExtent(region.bbox, 'EPSG:4326', 'EPSG:3857');
+    map.value.getView().fit(extent, {
+        padding: [88, 88, 88, 88],
+        duration,
+        maxZoom: region.defaultZoom,
+    });
+    return true;
+};
+
+const enableCatalogLayers = (catalogId?: string) => {
+    const catalogItem = findCatalogItem(catalogId);
+    if (!catalogItem) return;
+
+    catalogItem.layerBindings.forEach((binding) => {
+        if (binding.key === 'heihe-sites') {
+            layerConfig.value.heiheSites.visible = true;
+            heiheSiteLayer?.setVisible(true);
+        } else if (binding.key === 'heihe-observations') {
+            layerConfig.value.heiheObservations.visible = true;
+            heiheObservationLayer?.setVisible(true);
+        } else if (binding.key === 'heihe-grassland-polygons') {
+            layerConfig.value.grasslandPolygons.visible = true;
+            grasslandPolygonLayer?.setVisible(true);
+        } else if (binding.key === 'heihe-grassland-points') {
+            layerConfig.value.grasslandPoints.visible = true;
+            grasslandPointLayer?.setVisible(true);
+        } else if (binding.key === FOREST_CARBON_LAYER_ID) {
+            layerConfig.value.forestCarbon.visible = true;
+            layers.value.find(l => l.get('id') === FOREST_CARBON_LAYER_ID)?.setVisible(true);
+        } else if (binding.key === 'southwest-temperature-point') {
+            localOverlayGuideLayer.setVisible(true);
+        } else if (binding.key === 'central-asia-countries') {
+            layerConfig.value.centralAsiaCountries.visible = true;
+            centralAsiaCountriesLayer?.setVisible(true);
+        } else if (binding.key === 'central-asia-urban-points') {
+            layerConfig.value.centralAsiaUrbanPoints.visible = true;
+            centralAsiaUrbanPointLayer?.setVisible(true);
+        } else if (binding.key === 'central-asia-urban-polygons') {
+            layerConfig.value.centralAsiaUrbanPolygons.visible = true;
+            centralAsiaUrbanPolygonLayer?.setVisible(true);
+        } else if (binding.key === 'badaling-imagery') {
+            layerConfig.value.badalingImagery.visible = true;
+            layers.value
+                .filter((layer) => String(layer.get('id') || '').startsWith(BADALING_IMAGERY_LAYER_PREFIX))
+                .forEach((layer) => layer.setVisible(true));
+        } else if (binding.key === 'badaling-guide-point') {
+            localOverlayGuideLayer.setVisible(true);
+        } else if (binding.key === 'hepingjie-imagery') {
+            layerConfig.value.hepingjieImagery.visible = true;
+            layers.value
+                .filter((layer) => String(layer.get('id') || '').startsWith(HEPINGJIE_IMAGERY_LAYER_PREFIX))
+                .forEach((layer) => layer.setVisible(true));
+        } else if (binding.key === 'hepingjie-guide-point') {
+            localOverlayGuideLayer.setVisible(true);
+        } else if (binding.key.startsWith('local-raster-')) {
+            const overlayId = binding.key.replace('local-raster-', '');
+            const layerKey = getLocalRasterLayerKey(overlayId);
+            if (layerConfig.value[layerKey]) {
+                layerConfig.value[layerKey].visible = true;
+            }
+            syncLocalRasterOverlayVisibility();
+        }
+    });
+};
+
+const applyCatalogRouteTarget = () => {
+    const catalogId = route.query.catalog || route.query.layer;
+    const regionId = route.query.region;
+    const catalogKey = Array.isArray(catalogId) ? catalogId[0] : catalogId;
+    const regionKey = Array.isArray(regionId) ? regionId[0] : regionId;
+
+    if (typeof catalogKey === 'string') {
+        const catalogItem = findCatalogItem(catalogKey);
+        enableCatalogLayers(catalogKey);
+        if (catalogItem && fitCatalogRegion(catalogItem.regionId)) {
+            ElMessage.success(`已定位到：${catalogItem.title}`);
+            return true;
+        }
+    }
+
+    if (typeof regionKey === 'string' && fitCatalogRegion(regionKey)) {
+        ElMessage.success(`已定位到：${findCatalogRegion(regionKey)?.name || regionKey}`);
+        return true;
+    }
+
+    return false;
+};
+
+const syncLocalRasterOverlayVisibility = () => {
+    if (!map.value) return;
+    const zoom = map.value.getView().getZoom() ?? 0;
+    localRasterOverlays.value.forEach((overlay) => {
+        const layerKey = getLocalRasterLayerKey(overlay.id);
+        const layer = layers.value.find(l => l.get('id') === getLocalRasterLayerId(overlay.id));
+        const configuredVisible = layerConfig.value[layerKey]?.visible ?? true;
+        const shouldShow = configuredVisible && zoom >= overlay.min_zoom;
+        layer?.setVisible(shouldShow);
+    });
+};
+
+const appendIndexFeaturesToSource = (source: VectorSource, items: GeoDataItem[]) => {
+    items.forEach((item) => {
+        if (item.index_point_enabled === false) {
+            return;
+        }
+        if (typeof item.center_x !== 'number' || typeof item.center_y !== 'number') {
+            return;
+        }
+        const coords = toMapCoords([item.center_x, item.center_y], item.srid);
+        const feature = new Feature({
+            geometry: new Point(coords),
+            ...item
+        });
+        source.addFeature(feature);
+    });
+};
+
+const localOverlayGuideSource = new VectorSource();
+const localOverlayGuideLayer = new VectorLayer({
+    source: localOverlayGuideSource,
+    zIndex: 1004,
+    updateWhileAnimating: true,
+    style: (feature) => {
+        const featureType = feature.get('guideType');
+        const name = feature.get('name') || '';
+        const isForestCarbon = feature.get('dataset_id') === 'china-forest-carbon-2002-2021';
+        const borderColor = isForestCarbon ? 'rgba(28, 111, 62, 0.92)' : 'rgba(204, 59, 34, 0.95)';
+        const fillColor = isForestCarbon ? 'rgba(28, 111, 62, 0.11)' : 'rgba(204, 59, 34, 0.14)';
+        const textColor = isForestCarbon ? '#174a2b' : '#7a1f10';
+        const pointColor = isForestCarbon ? '#1f7a42' : '#cc3b22';
+        const pointTextColor = isForestCarbon ? '#163f27' : '#5c1b11';
+
+        if (featureType === 'extent') {
+            return new Style({
+                stroke: new Stroke({
+                    color: borderColor,
+                    width: 4,
+                    lineDash: [14, 8],
+                }),
+                fill: new Fill({
+                    color: fillColor,
+                }),
+                text: new Text({
+                    text: name,
+                    font: 'bold 14px sans-serif',
+                    fill: new Fill({ color: textColor }),
+                    stroke: new Stroke({ color: 'rgba(255,255,255,0.95)', width: 4 }),
+                    overflow: true,
+                    offsetY: -14,
+                }),
+            });
+        }
+
+        return new Style({
+            image: new CircleStyle({
+                radius: 11,
+                fill: new Fill({ color: pointColor }),
+                stroke: new Stroke({ color: '#fff7f2', width: 3 }),
+            }),
+            text: new Text({
+                text: name,
+                font: 'bold 12px sans-serif',
+                fill: new Fill({ color: pointTextColor }),
+                stroke: new Stroke({ color: 'rgba(255,255,255,0.92)', width: 3 }),
+                offsetY: -18,
+                overflow: true,
+            }),
+        });
+    }
+});
+
+const refreshLocalOverlayGuides = (overlays: LocalRasterOverlay[]) => {
+    localOverlayGuideSource.clear();
+
+    overlays.forEach((overlay) => {
+        if (typeof overlay.center_x === 'number' && typeof overlay.center_y === 'number') {
+            const centerFeature = new Feature({
+                geometry: new Point(toMapCoords([overlay.center_x, overlay.center_y], overlay.srid)),
+                guideType: 'center',
+                name: '喜马拉雅 GeoTIFF 下载点',
+                overlayId: overlay.id,
+                type: 'GeoTIFF地质数据',
+                sub_type: 'LocalRasterGuide',
+                extent: overlay.extent,
+                srid: overlay.srid,
+                center_x: overlay.center_x,
+                center_y: overlay.center_y,
+                description: `${overlay.name} 的快速定位入口。放大到 ${overlay.min_zoom} 级后自动显示影像，可直接下载原始 TIF 数据。`,
+                downloadable: true,
+                overlay_id: overlay.id,
+                source: 'local-overlay',
+            });
+            localOverlayGuideSource.addFeature(centerFeature);
+        }
+    });
+};
+
+const refreshForestCarbonGuide = (overlay: ForestCarbonOverlay) => {
+    localOverlayGuideSource.getFeatures()
+        .filter((feature) => feature.get('dataset_id') === 'china-forest-carbon-2002-2021')
+        .forEach((feature) => localOverlayGuideSource.removeFeature(feature));
+
+    if (typeof overlay.center_x === 'number' && typeof overlay.center_y === 'number') {
+        const centerFeature = new Feature({
+            geometry: new Point(toMapCoords([overlay.center_x, overlay.center_y], overlay.srid)),
+            guideType: 'center',
+            name: '森林碳储量索引点',
+            type: '森林碳储量栅格',
+            sub_type: 'ForestCarbonRasterGuide',
+            dataset_id: overlay.dataset_id,
+            extent: overlay.extent,
+            srid: overlay.srid,
+            center_x: overlay.center_x,
+            center_y: overlay.center_y,
+            description: `${overlay.name} 的快速定位与下载入口。`,
+            downloadable: true,
+            source: 'forest-carbon',
+            metric: overlay.metric,
+            year: overlay.year,
+            metadata: overlay.metadata,
+        });
+        localOverlayGuideSource.addFeature(centerFeature);
+    }
+};
+
+const refreshSouthwestTemperatureGuide = (dataset: SouthwestTemperatureDataset) => {
+    localOverlayGuideSource.getFeatures()
+        .filter((feature) => feature.get('dataset_id') === 'southwest-china-temperature-90ka')
+        .forEach((feature) => localOverlayGuideSource.removeFeature(feature));
+
+    const centerFeature = new Feature({
+        geometry: new Point(toMapCoords([dataset.center_x, dataset.center_y], dataset.srid)),
+        guideType: 'center',
+        name: '西南温度数据集索引点',
+        type: '定量温度数据',
+        sub_type: 'SouthwestTemperatureDataset',
+        dataset_id: dataset.dataset_id,
+        extent: dataset.bbox,
+        bbox: dataset.bbox,
+        srid: dataset.srid,
+        center_x: dataset.center_x,
+        center_y: dataset.center_y,
+        description: dataset.description,
+        downloadable: true,
+        source: 'southwest-temperature',
+        time_range: dataset.time_range,
+        metadata: dataset.metadata,
+    });
+    localOverlayGuideSource.addFeature(centerFeature);
+};
+
+const refreshBadalingImageryGuide = (dataset: BadalingImageryDataset) => {
+    localOverlayGuideSource.getFeatures()
+        .filter((feature) => feature.get('dataset_id') === 'badaling-town-imagery')
+        .forEach((feature) => localOverlayGuideSource.removeFeature(feature));
+
+    const centerFeature = new Feature({
+        geometry: new Point(toMapCoords([dataset.center_x, dataset.center_y], dataset.srid)),
+        guideType: 'center',
+        name: '八达岭镇影像索引点',
+        type: '分级遥感影像',
+        sub_type: 'BadalingImageryDataset',
+        dataset_id: dataset.dataset_id,
+        extent: dataset.bbox,
+        bbox: dataset.bbox,
+        srid: dataset.srid,
+        center_x: dataset.center_x,
+        center_y: dataset.center_y,
+        description: dataset.description,
+        downloadable: true,
+        source: 'badaling-imagery',
+        time_range: dataset.time_range,
+        metadata: dataset.metadata,
+    });
+    localOverlayGuideSource.addFeature(centerFeature);
+};
+
+const refreshHepingjieImageryGuide = (dataset: BadalingImageryDataset) => {
+    localOverlayGuideSource.getFeatures()
+        .filter((feature) => feature.get('dataset_id') === 'hepingjie-street-imagery')
+        .forEach((feature) => localOverlayGuideSource.removeFeature(feature));
+
+    const centerFeature = new Feature({
+        geometry: new Point(toMapCoords([dataset.center_x, dataset.center_y], dataset.srid)),
+        guideType: 'center',
+        name: '和平街街道影像索引点',
+        type: '分级遥感影像',
+        sub_type: 'HepingjieImageryDataset',
+        dataset_id: dataset.dataset_id,
+        extent: dataset.bbox,
+        bbox: dataset.bbox,
+        srid: dataset.srid,
+        center_x: dataset.center_x,
+        center_y: dataset.center_y,
+        description: dataset.description,
+        downloadable: true,
+        source: 'hepingjie-imagery',
+        time_range: dataset.time_range,
+        metadata: dataset.metadata,
+    });
+    localOverlayGuideSource.addFeature(centerFeature);
+};
+
+const setSelectedFeatureState = (feature: GeoDataItem | null) => {
+  currentFeature.value = feature;
+  if (feature?.id) {
+    mapStore.selectFeature(feature);
+  } else {
+    mapStore.clearSelection();
+  }
+};
+
+const getShareableSources = () => [
+    geoPointSource,
+    localOverlayGuideSource,
+    heiheSiteSource,
+    heiheObservationSource,
+    grasslandPolygonSource,
+    grasslandPointSource,
+    centralAsiaCountriesSource,
+    centralAsiaUrbanPolygonSource,
+    centralAsiaUrbanPointSource,
+];
+
+const findSharedFeature = (query: Record<string, unknown>) => {
+    const id = typeof query.id === 'string' ? query.id : '';
+    const datasetId = typeof query.dataset === 'string' ? query.dataset : '';
+    const overlayId = typeof query.overlay === 'string' ? query.overlay : '';
+    const name = typeof query.name === 'string' ? query.name : '';
+
+    for (const source of getShareableSources()) {
+        const feature = source.getFeatures().find((candidate) => {
+            const props = candidate.getProperties();
+            if (id && String(props.id) === id) return true;
+            if (datasetId && props.dataset_id === datasetId) return true;
+            if (overlayId && props.overlay_id === overlayId) return true;
+            if (name && props.name === name) return true;
+            return false;
+        });
+
+        if (feature) {
+            return {
+                ...feature.getProperties(),
+                geometry: feature.getGeometry(),
+            } as GeoDataItem & { geometry?: any };
+        }
+    }
+
+    return null;
+};
+
+const openSharedFeatureFromQuery = (coords: [number, number], zoom: number) => {
+    const sharedFeature = findSharedFeature(route.query as Record<string, unknown>);
+    const name = (route.query.name as string) || sharedFeature?.name || '目标位置';
+
+    flyTo(coords, zoom);
+    setNavigationMarker(coords, name, true);
+
+    if (sharedFeature) {
+        setSelectedFeatureState(sharedFeature as GeoDataItem);
+        selectedItems.value = [sharedFeature as GeoDataItem];
+        sidePanelVisible.value = true;
+
+        highlightSource.clear();
+        if (sharedFeature.geometry) {
+            const clone = new Feature(sharedFeature.geometry.clone());
+            const props = { ...sharedFeature };
+            delete props.geometry;
+            clone.setProperties(props);
+            highlightSource.addFeature(clone);
+        } else if (typeof sharedFeature.center_x === 'number' && typeof sharedFeature.center_y === 'number') {
+            highlightSource.addFeature(new Feature(new Point(coords)));
+        }
+    }
+
+    ElMessage.success(`已定位到: ${name}`);
+};
 
 // Tool toggle handlers
 const toggleLayers = () => {
@@ -331,15 +1000,16 @@ const handleBufferDraw = async (geometry: any) => {
         const res = await geoDataApi.bufferQuery(centerLonLat[0], centerLonLat[1], realRadius);
         const data = Array.isArray(res) ? res : (res as any).data || [];
         
-        if (data.length > 0) {
-            if (data.length === 1) {
-                currentFeature.value = data[0];
-                selectedItems.value = data;
-            } else {
-                currentFeature.value = null;
-                selectedItems.value = data;
-            }
-            sidePanelVisible.value = true;
+                if (data.length > 0) {
+                    if (data.length === 1) {
+                        setSelectedFeatureState(data[0]);
+                        selectedItems.value = data;
+                    } else {
+                        setSelectedFeatureState(null);
+                        selectedItems.value = data;
+                        mapStore.selectFeatures(data);
+                    }
+                    sidePanelVisible.value = true;
             // Highlight results
             highlightSource.clear();
             data.forEach((item: GeoDataItem) => {
@@ -399,10 +1069,10 @@ const handleShareView = async () => {
     const z = zoom.toFixed(2);
     
     // 构建包含当前视角的 URL
-    const url = `${window.location.origin}${window.location.pathname}?x=${lon}&y=${lat}&z=${z}`;
+    const url = `${window.location.origin}/map?lon=${lon}&lat=${lat}&z=${z}`;
     
     try {
-      await navigator.clipboard.writeText(url);
+      await copyTextToClipboard(url);
       ElNotification({
         title: '分享成功',
         message: '视角链接已复制到剪贴板',
@@ -423,40 +1093,114 @@ const handleShareView = async () => {
   }
 };
 
-const popupRef = ref<HTMLElement | null>(null);
+const copyTextToClipboard = async (text: string) => {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+
+  if (!copied) {
+    throw new Error('Clipboard copy failed');
+  }
+};
+
+const buildFeatureShareUrl = (item: GeoDataItem) => {
+  const url = new URL('/map', window.location.origin);
+  const catalogItem = item.dataset_id ? findCatalogItem(item.dataset_id) : undefined;
+  const lon = typeof item.center_x === 'number' ? item.center_x : undefined;
+  const lat = typeof item.center_y === 'number' ? item.center_y : undefined;
+  const zoom = map.value?.getView().getZoom() ?? 14;
+
+  url.searchParams.set('name', item.name || '地质数据');
+  url.searchParams.set('z', zoom.toFixed(2));
+  url.searchParams.set('share', 'feature');
+
+  if (item.id !== undefined && item.id !== null) {
+    url.searchParams.set('id', String(item.id));
+  }
+  if (item.dataset_id) {
+    url.searchParams.set('dataset', item.dataset_id);
+  }
+  if (item.overlay_id) {
+    url.searchParams.set('overlay', item.overlay_id);
+  }
+  if (catalogItem) {
+    url.searchParams.set('catalog', catalogItem.id);
+    url.searchParams.set('layer', catalogItem.id);
+    url.searchParams.set('region', catalogItem.regionId);
+  }
+  if (typeof lon === 'number' && typeof lat === 'number') {
+    url.searchParams.set('lon', lon.toFixed(6));
+    url.searchParams.set('lat', lat.toFixed(6));
+  }
+
+  return url.toString();
+};
+
+const handleShareFeature = async (item: GeoDataItem) => {
+  try {
+    const url = buildFeatureShareUrl(item);
+    await copyTextToClipboard(url);
+    ElNotification({
+      title: '分享成功',
+      message: '地质点链接已复制到剪贴板',
+      type: 'success',
+      duration: 3000,
+      offset: 80,
+    });
+  } catch (err) {
+    console.error('Failed to share feature:', err);
+    ElNotification({
+      title: '复制失败',
+      message: '浏览器拒绝剪贴板访问，请稍后重试',
+      type: 'error',
+      duration: 3000,
+      offset: 80,
+    });
+  }
+};
+
 const tooltipContent = ref('');
 const currentBaseMap = ref<'vector' | 'satellite'>('vector');
 const navigationSource = new VectorSource();
 const geoPointSource = new VectorSource();
+const heiheSiteSource = new VectorSource();
+const heiheObservationSource = new VectorSource();
+const heiheObservationClusterSource = new Cluster({
+  distance: 54,
+  minDistance: 18,
+  source: heiheObservationSource,
+});
+const grasslandPolygonSource = new VectorSource();
+const grasslandPointSource = new VectorSource();
+const grasslandPointClusterSource = new Cluster({
+  distance: 66,
+  minDistance: 22,
+  source: grasslandPointSource,
+});
 const zoomLevel = ref(10);
-const popupInfo = ref<any>(null);
-let popupOverlay: Overlay | null = null;
-
-const closePopup = () => {
-  popupInfo.value = null;
-  if (popupOverlay) {
-    popupOverlay.setPosition(undefined);
-  }
-};
-
-const handleSetCenter = (info: any) => {
-  if (info.location) {
-    const coords = fromLonLat([info.location.lon, info.location.lat]) as [number, number];
-    if (map.value) {
-      map.value.getView().animate({
-        center: coords,
-        zoom: 14,
-        duration: 1000
-      });
-    }
-  }
-  closePopup();
-};
-
-const handleDetail = (info: any) => {
-  // Mock detail or simple info
-  ElMessage.info(`查看详情: ${info.name}`);
-};
+let heiheSiteLayer: VectorLayer<VectorSource> | null = null;
+let heiheObservationLayer: VectorLayer<Cluster> | null = null;
+let grasslandPolygonLayer: VectorLayer<VectorSource> | null = null;
+let grasslandPointLayer: VectorLayer<Cluster> | null = null;
+const heiheGeoJSON = new GeoJSON();
+const grasslandGeoJSON = new GeoJSON();
+const heiheDatasetBBox = ref<[number, number, number, number] | null>(null);
+const grasslandDatasetBBox = ref<[number, number, number, number] | null>(null);
+const heiheQuickLocateVisible = ref(false);
+const heiheSelectedSiteKey = ref<string | null>(null);
+const grasslandSelectedId = ref<string | number | null>(null);
+const GRASSLAND_POINT_MIN_ZOOM = 7;
 
 const sidePanelTitle = computed(() => {
   if (isNearbyActive.value) return '周边分析结果';
@@ -464,49 +1208,514 @@ const sidePanelTitle = computed(() => {
   return currentFeature.value?.name || '详细信息';
 });
 
-// Highlight Layer
-const highlightSource = new VectorSource();
-const highlightLayer = new VectorLayer({
-  source: highlightSource,
-  zIndex: 9999, // Ensure it's on top
-  style: new Style({
-    image: new CircleStyle({
-      radius: 6,
-      fill: new Fill({ color: '#FFFF00' }), // Yellow highlight
-      stroke: new Stroke({ color: '#FF0000', width: 2 })
-    }),
-    zIndex: Infinity
-  })
-});
-
-// Buffer Layer for Nearby Analysis
-const bufferSource = new VectorSource();
-const bufferLayer = new VectorLayer({
-  source: bufferSource,
-  zIndex: 999,
-  style: new Style({
-    fill: new Fill({
-      color: 'rgba(64, 158, 255, 0.2)'
-    }),
-    stroke: new Stroke({
-      color: '#409EFF',
-      width: 2,
-      lineDash: [10, 10]
-    })
-  })
-});
+const { source: highlightSource, layer: highlightLayer } = createHighlightLayer();
+const { source: bufferSource, layer: bufferLayer } = createBufferLayer();
 
 const layerConfig = ref<LayerConfig>({
   faults: { visible: true, opacity: 80, name: '矢量断裂带' },
   boreholes: { visible: true, opacity: 90, name: '钻孔分布点' },
-  raster: { visible: true, opacity: 80, name: '栅格影像' }
+  raster: { visible: true, opacity: 80, name: '栅格影像' },
+  heiheSites: { visible: true, opacity: 95, name: '黑河站点汇总' },
+  heiheObservations: { visible: true, opacity: 88, name: '黑河逐次观测' },
+  grasslandPolygons: { visible: true, opacity: 62, name: '黑河草场分布面' },
+  grasslandPoints: { visible: true, opacity: 92, name: '黑河草场索引点' },
+  forestCarbon: { visible: true, opacity: 72, name: '森林碳储量栅格' },
+  centralAsiaCountries: { visible: true, opacity: 68, name: '中亚国家边界' },
+  centralAsiaUrbanPoints: { visible: true, opacity: 92, name: '中亚城镇索引点' },
+  centralAsiaUrbanPolygons: { visible: true, opacity: 60, name: '中亚城镇分布面' },
+  badalingImagery: { visible: true, opacity: 90, name: '八达岭镇分级影像' },
+  hepingjieImagery: { visible: true, opacity: 90, name: '和平街街道分级影像' }
 });
 
-const toMapCoords = (coord: [number, number], srid?: number) => {
-  if (srid === 3857) {
-    return coord;
+const syncHeiheQuickLocateVisibility = () => {
+  if (!map.value || !heiheDatasetBBox.value) {
+    heiheQuickLocateVisible.value = false;
+    return;
   }
-  return fromLonLat(coord) as [number, number];
+
+  const center = map.value.getView().getCenter();
+  if (!center) {
+    heiheQuickLocateVisible.value = false;
+    return;
+  }
+
+  const [lon, lat] = toLonLat(center);
+  const [minLon, minLat, maxLon, maxLat] = heiheDatasetBBox.value;
+  heiheQuickLocateVisible.value = lon < minLon || lon > maxLon || lat < minLat || lat > maxLat;
+};
+
+const fitHeiheBBox = (bbox?: [number, number, number, number] | null, maxZoom = 12) => {
+  if (!map.value || !bbox) return;
+  const extent = transformExtent(bbox, 'EPSG:4326', 'EPSG:3857');
+  map.value.getView().fit(extent, {
+    padding: [90, 90, 90, 90],
+    duration: 1000,
+    maxZoom,
+  });
+};
+
+const handleQuickLocateHeihe = () => {
+  fitHeiheBBox(heiheDatasetBBox.value, 11);
+};
+
+const createHeiheSiteStyle = (feature: Feature) => {
+  const isSelected = feature.get('site_key') === heiheSelectedSiteKey.value;
+  return new Style({
+    image: new CircleStyle({
+      radius: isSelected ? 11 : 9,
+      fill: new Fill({ color: '#2d5a27' }),
+      stroke: new Stroke({
+        color: isSelected ? '#cfe7b6' : 'rgba(255,255,255,0.96)',
+        width: isSelected ? 4 : 3,
+      }),
+    }),
+    text: new Text({
+      text: String(feature.get('name') || ''),
+      font: 'bold 12px sans-serif',
+      offsetY: -18,
+      fill: new Fill({ color: '#1f3f1a' }),
+      stroke: new Stroke({ color: 'rgba(255,255,255,0.95)', width: 3 }),
+      overflow: true,
+    }),
+  });
+};
+
+const createHeiheObservationStyle = (feature: Feature) => {
+  const clusteredFeatures = feature.get('features') as Feature[] | undefined;
+  const size = clusteredFeatures?.length || 1;
+
+  if (size > 1) {
+    const radius = Math.min(26, 12 + Math.sqrt(size) * 4);
+    return new Style({
+      image: new CircleStyle({
+        radius,
+        fill: new Fill({ color: 'rgba(45, 90, 39, 0.86)' }),
+        stroke: new Stroke({ color: 'rgba(236, 248, 226, 0.96)', width: 3 }),
+      }),
+      text: new Text({
+        text: String(size),
+        font: 'bold 13px sans-serif',
+        fill: new Fill({ color: '#ffffff' }),
+        stroke: new Stroke({ color: 'rgba(31, 63, 26, 0.72)', width: 2 }),
+      }),
+    });
+  }
+
+  const originalFeature = clusteredFeatures?.[0] || feature;
+  const siteKey = originalFeature.get('site_key');
+  const isSelectedSite = siteKey && siteKey === heiheSelectedSiteKey.value;
+  return new Style({
+    image: new CircleStyle({
+      radius: isSelectedSite ? 6 : 5,
+      fill: new Fill({ color: isSelectedSite ? '#3d7d34' : 'rgba(45, 90, 39, 0.84)' }),
+      stroke: new Stroke({ color: 'rgba(255,255,255,0.9)', width: 2 }),
+    }),
+  });
+};
+
+const getGrasslandColor = (feature: Feature) => {
+  const mainType = String(feature.get('MAINTYPE') || feature.get('metadata')?.main_type || '');
+  const grassType = String(feature.get('TYPE') || feature.get('metadata')?.grass_type || '');
+
+  if (mainType.includes('草场') && !mainType.includes('非草场')) return '#5f8f3d';
+  if (grassType.includes('灌丛')) return '#3f7f55';
+  if (grassType.includes('草甸')) return '#6ba85a';
+  if (grassType.includes('戈壁') || grassType.includes('裸露')) return '#b99a6b';
+  if (grassType.includes('耕地')) return '#d7b85c';
+  if (grassType.includes('水')) return '#5d95b8';
+  return '#7d9b4f';
+};
+
+const createGrasslandPolygonStyle = (feature: Feature) => {
+  const featureId = feature.get('id') || feature.get('GRASSF_ID');
+  const selected = grasslandSelectedId.value !== null && String(featureId) === String(grasslandSelectedId.value);
+  const color = getGrasslandColor(feature);
+
+  return new Style({
+    fill: new Fill({
+      color: selected ? 'rgba(116, 161, 75, 0.48)' : `${color}66`,
+    }),
+    stroke: new Stroke({
+      color: selected ? '#f3f7d5' : 'rgba(62, 95, 48, 0.72)',
+      width: selected ? 3 : 1.2,
+    }),
+  });
+};
+
+const createGrasslandPointStyle = (feature: Feature) => {
+  const clusteredFeatures = feature.get('features') as Feature[] | undefined;
+  const size = clusteredFeatures?.length || 1;
+
+  if (size > 1) {
+    const radius = Math.min(28, 11 + Math.sqrt(size) * 3.6);
+    return new Style({
+      image: new CircleStyle({
+        radius,
+        fill: new Fill({ color: 'rgba(87, 129, 48, 0.88)' }),
+        stroke: new Stroke({ color: 'rgba(255, 252, 232, 0.96)', width: 3 }),
+      }),
+      text: new Text({
+        text: String(size),
+        font: 'bold 13px sans-serif',
+        fill: new Fill({ color: '#ffffff' }),
+        stroke: new Stroke({ color: 'rgba(49, 72, 28, 0.78)', width: 2 }),
+      }),
+    });
+  }
+
+  const originalFeature = clusteredFeatures?.[0] || feature;
+  const featureId = originalFeature.get('id') || originalFeature.get('GRASSF_ID');
+  const selected = grasslandSelectedId.value !== null && String(featureId) === String(grasslandSelectedId.value);
+
+  return new Style({
+    image: new CircleStyle({
+      radius: selected ? 7 : 5,
+      fill: new Fill({ color: selected ? '#8fbd54' : 'rgba(87, 129, 48, 0.88)' }),
+      stroke: new Stroke({ color: selected ? '#fff7cc' : 'rgba(255,255,255,0.9)', width: selected ? 3 : 2 }),
+    }),
+  });
+};
+
+const createCentralAsiaCountryStyle = (feature: Feature) => {
+  const selected = centralAsiaSelectedId.value !== null && String(feature.get('id')) === String(centralAsiaSelectedId.value);
+  return new Style({
+    stroke: new Stroke({
+      color: selected ? 'rgba(214, 170, 57, 0.98)' : 'rgba(120, 92, 45, 0.88)',
+      width: selected ? 2.6 : 1.6,
+    }),
+    fill: new Fill({
+      color: selected ? 'rgba(214, 170, 57, 0.12)' : 'rgba(194, 173, 127, 0.08)',
+    }),
+  });
+};
+
+const createCentralAsiaUrbanPolygonStyle = (feature: Feature) => {
+  const selected = centralAsiaSelectedId.value !== null && String(feature.get('id')) === String(centralAsiaSelectedId.value);
+  return new Style({
+    stroke: new Stroke({
+      color: selected ? 'rgba(255, 238, 178, 0.96)' : 'rgba(138, 73, 33, 0.82)',
+      width: selected ? 2.8 : 1.1,
+    }),
+    fill: new Fill({
+      color: selected ? 'rgba(199, 111, 47, 0.40)' : 'rgba(199, 111, 47, 0.22)',
+    }),
+  });
+};
+
+const createCentralAsiaUrbanPointStyle = (feature: Feature) => {
+  const clusteredFeatures = feature.get('features') as Feature[] | undefined;
+  const size = clusteredFeatures?.length || 1;
+
+  if (size > 1) {
+    const radius = Math.min(30, 12 + Math.sqrt(size) * 3.8);
+    return new Style({
+      image: new CircleStyle({
+        radius,
+        fill: new Fill({ color: 'rgba(173, 95, 34, 0.9)' }),
+        stroke: new Stroke({ color: 'rgba(255, 246, 214, 0.96)', width: 3 }),
+      }),
+      text: new Text({
+        text: String(size),
+        font: 'bold 13px sans-serif',
+        fill: new Fill({ color: '#ffffff' }),
+        stroke: new Stroke({ color: 'rgba(99, 48, 15, 0.78)', width: 2 }),
+      }),
+    });
+  }
+
+  const originalFeature = clusteredFeatures?.[0] || feature;
+  const featureId = originalFeature.get('id');
+  const selected = centralAsiaSelectedId.value !== null && String(featureId) === String(centralAsiaSelectedId.value);
+
+  return new Style({
+    image: new CircleStyle({
+      radius: selected ? 8 : 6,
+      fill: new Fill({ color: selected ? '#d79a53' : 'rgba(173, 95, 34, 0.9)' }),
+      stroke: new Stroke({ color: selected ? '#fff1c2' : 'rgba(255,255,255,0.92)', width: selected ? 3 : 2 }),
+    }),
+  });
+};
+
+const ensureHeiheLayers = () => {
+  if (!map.value) return;
+
+  if (!heiheSiteLayer) {
+    heiheSiteLayer = new VectorLayer({
+      source: heiheSiteSource,
+      zIndex: 1001,
+      style: (feature) => createHeiheSiteStyle(feature as Feature),
+      visible: layerConfig.value.heiheSites.visible,
+      opacity: layerConfig.value.heiheSites.opacity / 100,
+    });
+    heiheSiteLayer.set('id', 'heihe-sites');
+    map.value.addLayer(heiheSiteLayer);
+    layers.value = [...layers.value, heiheSiteLayer];
+  }
+
+  if (!heiheObservationLayer) {
+    heiheObservationLayer = new VectorLayer({
+      source: heiheObservationClusterSource,
+      zIndex: 1000,
+      style: (feature) => createHeiheObservationStyle(feature as Feature),
+      visible: layerConfig.value.heiheObservations.visible,
+      opacity: layerConfig.value.heiheObservations.opacity / 100,
+    });
+    heiheObservationLayer.set('id', 'heihe-observations');
+    map.value.addLayer(heiheObservationLayer);
+    layers.value = [...layers.value, heiheObservationLayer];
+  }
+};
+
+const ensureGrasslandLayers = () => {
+  if (!map.value) return;
+
+  if (!grasslandPolygonLayer) {
+    grasslandPolygonLayer = new VectorLayer({
+      source: grasslandPolygonSource,
+      zIndex: 940,
+      style: (feature) => createGrasslandPolygonStyle(feature as Feature),
+      visible: layerConfig.value.grasslandPolygons.visible,
+      opacity: layerConfig.value.grasslandPolygons.opacity / 100,
+    });
+    grasslandPolygonLayer.set('id', 'heihe-grassland-polygons');
+    map.value.addLayer(grasslandPolygonLayer);
+    layers.value = [...layers.value, grasslandPolygonLayer];
+  }
+
+  if (!grasslandPointLayer) {
+    grasslandPointLayer = new VectorLayer({
+      source: grasslandPointClusterSource,
+      zIndex: 1001,
+      minZoom: GRASSLAND_POINT_MIN_ZOOM - 0.01,
+      style: (feature) => createGrasslandPointStyle(feature as Feature),
+      visible: layerConfig.value.grasslandPoints.visible,
+      opacity: layerConfig.value.grasslandPoints.opacity / 100,
+    });
+    grasslandPointLayer.set('id', 'heihe-grassland-points');
+    map.value.addLayer(grasslandPointLayer);
+    layers.value = [...layers.value, grasslandPointLayer];
+  }
+};
+
+const ensureCentralAsiaLayers = () => {
+  if (!map.value) return;
+
+  if (!centralAsiaCountriesLayer) {
+    centralAsiaCountriesLayer = new VectorLayer({
+      source: centralAsiaCountriesSource,
+      zIndex: 930,
+      style: (feature) => createCentralAsiaCountryStyle(feature as Feature),
+      visible: layerConfig.value.centralAsiaCountries.visible,
+      opacity: layerConfig.value.centralAsiaCountries.opacity / 100,
+    });
+    centralAsiaCountriesLayer.set('id', 'central-asia-countries');
+    map.value.addLayer(centralAsiaCountriesLayer);
+    layers.value = [...layers.value, centralAsiaCountriesLayer];
+  }
+
+  if (!centralAsiaUrbanPolygonLayer) {
+    centralAsiaUrbanPolygonLayer = new VectorLayer({
+      source: centralAsiaUrbanPolygonSource,
+      zIndex: 955,
+      minZoom: CENTRAL_ASIA_POLYGON_MIN_ZOOM - 0.01,
+      style: (feature) => createCentralAsiaUrbanPolygonStyle(feature as Feature),
+      visible: layerConfig.value.centralAsiaUrbanPolygons.visible,
+      opacity: layerConfig.value.centralAsiaUrbanPolygons.opacity / 100,
+    });
+    centralAsiaUrbanPolygonLayer.set('id', 'central-asia-urban-polygons');
+    map.value.addLayer(centralAsiaUrbanPolygonLayer);
+    layers.value = [...layers.value, centralAsiaUrbanPolygonLayer];
+  }
+
+  if (!centralAsiaUrbanPointLayer) {
+    centralAsiaUrbanPointLayer = new VectorLayer({
+      source: centralAsiaUrbanPointClusterSource,
+      zIndex: 1002,
+      minZoom: CENTRAL_ASIA_POINT_MIN_ZOOM - 0.01,
+      style: (feature) => createCentralAsiaUrbanPointStyle(feature as Feature),
+      visible: layerConfig.value.centralAsiaUrbanPoints.visible,
+      opacity: layerConfig.value.centralAsiaUrbanPoints.opacity / 100,
+    });
+    centralAsiaUrbanPointLayer.set('id', 'central-asia-urban-points');
+    map.value.addLayer(centralAsiaUrbanPointLayer);
+    layers.value = [...layers.value, centralAsiaUrbanPointLayer];
+  }
+};
+
+const loadHeiheSites = async () => {
+  const response = await geoDataApi.getHeiheGeoJSON('sites');
+  heiheSiteSource.clear();
+  if (response.bbox) {
+    heiheDatasetBBox.value = response.bbox;
+  }
+
+  const features = heiheGeoJSON.readFeatures(response as any, {
+    dataProjection: 'EPSG:4326',
+    featureProjection: 'EPSG:3857',
+  });
+  heiheSiteSource.addFeatures(features);
+  syncHeiheQuickLocateVisibility();
+};
+
+const loadHeiheObservations = async (siteKey: string) => {
+  const response = await geoDataApi.getHeiheGeoJSON('observations', siteKey);
+  heiheObservationSource.clear();
+  const features = heiheGeoJSON.readFeatures(response as any, {
+    dataProjection: 'EPSG:4326',
+    featureProjection: 'EPSG:3857',
+  });
+  heiheObservationSource.addFeatures(features);
+  heiheSelectedSiteKey.value = siteKey;
+  heiheSiteLayer?.changed();
+  heiheObservationLayer?.changed();
+};
+
+const loadHeiheGrassland = async () => {
+  const [polygons, points] = await Promise.all([
+    geoDataApi.getHeiheGrasslandGeoJSON('polygons'),
+    geoDataApi.getHeiheGrasslandGeoJSON('points'),
+  ]);
+
+  grasslandPolygonSource.clear();
+  grasslandPointSource.clear();
+
+  if (polygons.bbox) {
+    grasslandDatasetBBox.value = polygons.bbox;
+  }
+
+  const polygonFeatures = grasslandGeoJSON.readFeatures(polygons as any, {
+    dataProjection: 'EPSG:4326',
+    featureProjection: 'EPSG:3857',
+  });
+  const pointFeatures = grasslandGeoJSON.readFeatures(points as any, {
+    dataProjection: 'EPSG:4326',
+    featureProjection: 'EPSG:3857',
+  });
+
+  grasslandPolygonSource.addFeatures(polygonFeatures);
+  grasslandPointSource.addFeatures(pointFeatures);
+};
+
+const loadCentralAsiaCountries = async () => {
+  const response = await geoDataApi.getCentralAsiaDesertGeoJSON('countries');
+  centralAsiaCountriesSource.clear();
+  if (response.bbox) {
+    centralAsiaDatasetBBox.value = response.bbox;
+  }
+  const features = centralAsiaGeoJSON.readFeatures(response as any, {
+    dataProjection: 'EPSG:4326',
+    featureProjection: 'EPSG:3857',
+  });
+  centralAsiaCountriesSource.addFeatures(features);
+};
+
+const loadCentralAsiaViewportData = async (force = false) => {
+  const bbox = getCurrentMapBBox();
+  if (!bbox || !centralAsiaDatasetBBox.value || !bboxIntersects(bbox, centralAsiaDatasetBBox.value)) {
+    centralAsiaUrbanPolygonSource.clear();
+    centralAsiaUrbanPointSource.clear();
+    centralAsiaPolygonBBoxKey.value = '';
+    centralAsiaPointBBoxKey.value = '';
+    return;
+  }
+
+  const zoom = map.value?.getView().getZoom() ?? 0;
+  const bboxKey = buildBBoxKey(bbox);
+  const shouldLoadPoints = layerConfig.value.centralAsiaUrbanPoints.visible && zoom >= CENTRAL_ASIA_POINT_MIN_ZOOM;
+  const shouldLoadPolygons = layerConfig.value.centralAsiaUrbanPolygons.visible && zoom >= CENTRAL_ASIA_POLYGON_MIN_ZOOM;
+
+  if (!shouldLoadPoints) {
+    centralAsiaUrbanPointSource.clear();
+    centralAsiaPointBBoxKey.value = '';
+  }
+  if (!shouldLoadPolygons) {
+    centralAsiaUrbanPolygonSource.clear();
+    centralAsiaPolygonBBoxKey.value = '';
+  }
+
+  const tasks: Promise<void>[] = [];
+
+  if (shouldLoadPoints && (force || bboxKey !== centralAsiaPointBBoxKey.value)) {
+    tasks.push((async () => {
+      const response: CentralAsiaDesertGeoJSONResponse = await geoDataApi.getCentralAsiaDesertGeoJSON('urban-points', bbox);
+      centralAsiaUrbanPointSource.clear();
+      const features = centralAsiaGeoJSON.readFeatures(response as any, {
+        dataProjection: 'EPSG:4326',
+        featureProjection: 'EPSG:3857',
+      });
+      centralAsiaUrbanPointSource.addFeatures(features);
+      centralAsiaPointBBoxKey.value = bboxKey;
+    })());
+  }
+
+  if (shouldLoadPolygons && (force || bboxKey !== centralAsiaPolygonBBoxKey.value)) {
+    tasks.push((async () => {
+      const response: CentralAsiaDesertGeoJSONResponse = await geoDataApi.getCentralAsiaDesertGeoJSON('urban-polygons', bbox);
+      centralAsiaUrbanPolygonSource.clear();
+      const features = centralAsiaGeoJSON.readFeatures(response as any, {
+        dataProjection: 'EPSG:4326',
+        featureProjection: 'EPSG:3857',
+      });
+      centralAsiaUrbanPolygonSource.addFeatures(features);
+      centralAsiaPolygonBBoxKey.value = bboxKey;
+    })());
+  }
+
+  if (tasks.length > 0) {
+    await Promise.all(tasks);
+  }
+};
+
+const shouldFetchCentralAsiaViewportData = (force = false) => {
+  const bbox = getCurrentMapBBox();
+  if (!bbox || !centralAsiaDatasetBBox.value || !bboxIntersects(bbox, centralAsiaDatasetBBox.value)) {
+    return false;
+  }
+
+  const zoom = map.value?.getView().getZoom() ?? 0;
+  const bboxKey = buildBBoxKey(bbox);
+  const shouldLoadPoints = layerConfig.value.centralAsiaUrbanPoints.visible && zoom >= CENTRAL_ASIA_POINT_MIN_ZOOM;
+  const shouldLoadPolygons = layerConfig.value.centralAsiaUrbanPolygons.visible && zoom >= CENTRAL_ASIA_POLYGON_MIN_ZOOM;
+
+  if (force) {
+    return shouldLoadPoints || shouldLoadPolygons;
+  }
+
+  return (
+    (shouldLoadPoints && bboxKey !== centralAsiaPointBBoxKey.value) ||
+    (shouldLoadPolygons && bboxKey !== centralAsiaPolygonBBoxKey.value)
+  );
+};
+
+const fitFeatureOnMap = (feature: any) => {
+  if (!map.value) return;
+
+  if (feature?.bbox && Array.isArray(feature.bbox) && feature.bbox.length === 4) {
+    fitHeiheBBox(feature.bbox as [number, number, number, number], 13);
+    return;
+  }
+
+  if (feature?.extent && Array.isArray(feature.extent) && feature.extent.length === 4) {
+    try {
+      const sourceProjection = feature.srid === 3857 ? 'EPSG:3857' : `EPSG:${feature.srid || 4326}`;
+      const extent = sourceProjection === 'EPSG:3857'
+        ? feature.extent
+        : transformExtent(feature.extent, sourceProjection, 'EPSG:3857');
+      map.value.getView().fit(extent, { padding: [90, 90, 90, 90], duration: 900, maxZoom: 13 });
+      return;
+    } catch (error) {
+      console.warn('Failed to fit feature extent:', error);
+    }
+  }
+
+  if (typeof feature?.center_x === 'number' && typeof feature?.center_y === 'number') {
+    const coords = toMapCoords([feature.center_x, feature.center_y], feature.srid || 4326);
+    map.value.getView().fit([coords[0] - 200, coords[1] - 200, coords[0] + 200, coords[1] + 200], {
+      padding: [90, 90, 90, 90],
+      duration: 900,
+      maxZoom: 13,
+    });
+  }
 };
 
 const setNavigationMarker = (coord: [number, number], name?: string, isRed: boolean = false) => {
@@ -553,142 +1762,7 @@ const handleLogout = () => {
     });
 };
 
-const toggle3D = () => {
-    if (!map.value) return;
-    
-    is3DActive.value = !is3DActive.value;
-    
-    if (is3DActive.value) {
-        // Sync OL to Cesium
-        const view = map.value.getView();
-        const center = toLonLat(view.getCenter()!);
-        const zoom = view.getZoom() || 10;
-        const extent = view.calculateExtent(map.value.getSize()!);
-        const lonLatExtent = transformExtent(extent, 'EPSG:3857', 'EPSG:4326') as [number, number, number, number];
-        
-        viewState.value = {
-            center: center as [number, number],
-            zoom: zoom,
-            extent: lonLatExtent
-        };
-        
-        ElMessage.success('已切换至 3D 预览模式');
-    } else {
-        ElMessage.info('已回到 2D 地图模式');
-    }
-};
 
-const toggleNearby = () => {
-  if (isSwipeActive.value) {
-      ElMessage.warning('请先关闭卷帘对比模式');
-      return;
-  }
-  isNearbyActive.value = !isNearbyActive.value;
-  if (!isNearbyActive.value) {
-    bufferSource.clear();
-    selectedItems.value = [];
-    sidePanelVisible.value = false;
-  } else {
-    ElMessage.info('开启周边分析模式：请点击地图查看周边数据');
-  }
-};
-
-const toggleSwipe = () => {
-    if (isNearbyActive.value) {
-        ElMessage.warning('请先关闭周边分析模式');
-        return;
-    }
-    
-    isSwipeActive.value = !isSwipeActive.value;
-    
-    if (isSwipeActive.value) {
-        ElMessage.info('开启卷帘模式：左侧卫星影像，右侧矢量地图');
-        enableSwipe();
-    } else {
-        disableSwipe();
-    }
-};
-
-const enableSwipe = () => {
-    // 1. Ensure both layers are present
-    // Left: Satellite (Bottom), Right: Vector (Top)
-    
-    // Reset layers first to be clean
-    // Actually we can just add them if missing
-    addTDTLayer('img'); // Satellite
-    addTDTLayer('cia'); // Labels
-    addTDTLayer('vec'); // Vector
-    addTDTLayer('cva'); // Labels
-    
-    // 2. Set Visibility and Z-Index
-    // We want Vector on TOP to clip it
-    const vecLayer = layers.value.find(l => l.get('id') === 'tdt-vec');
-    const cvaLayer = layers.value.find(l => l.get('id') === 'tdt-cva');
-    const imgLayer = layers.value.find(l => l.get('id') === 'tdt-img');
-    const ciaLayer = layers.value.find(l => l.get('id') === 'tdt-cia');
-    
-    if (imgLayer) { imgLayer.setVisible(true); imgLayer.setZIndex(0); }
-    if (ciaLayer) { ciaLayer.setVisible(true); ciaLayer.setZIndex(1); }
-    
-    // Vector layers on top, to be clipped
-    if (vecLayer) { 
-        vecLayer.setVisible(true); 
-        vecLayer.setZIndex(10); 
-        vecLayer.on('prerender' as any, swipePrerender);
-        vecLayer.on('postrender' as any, swipePostrender);
-    }
-    if (cvaLayer) { 
-        cvaLayer.setVisible(true); 
-        cvaLayer.setZIndex(11); 
-        cvaLayer.on('prerender' as any, swipePrerender);
-        cvaLayer.on('postrender' as any, swipePostrender);
-    }
-    
-    map.value?.render();
-};
-
-const disableSwipe = () => {
-    // Remove listeners
-    const vecLayer = layers.value.find(l => l.get('id') === 'tdt-vec');
-    const cvaLayer = layers.value.find(l => l.get('id') === 'tdt-cva');
-    
-    if (vecLayer) {
-        vecLayer.un('prerender' as any, swipePrerender);
-        vecLayer.un('postrender' as any, swipePostrender);
-    }
-    if (cvaLayer) {
-        cvaLayer.un('prerender' as any, swipePrerender);
-        cvaLayer.un('postrender' as any, swipePostrender);
-    }
-    
-    // Restore base map state
-    updateBaseMapLayers();
-    map.value?.render();
-};
-
-const swipePrerender = (event: any) => {
-    const ctx = event.context;
-    const mapSize = map.value?.getSize();
-    if (!mapSize) return;
-    
-    const width = mapSize[0] * (swipeValue.value / 100);
-    // Calculate pixel ratio for retina displays
-    const pixelRatio = event.frameState.pixelRatio;
-    
-    ctx.save();
-    ctx.beginPath();
-    // Clip the right side (Vector)
-    // Rect: x, y, w, h
-    // We want to show Vector only on the RIGHT of the slider
-    // So clip rectangle starts at width and goes to end
-    ctx.rect(width * pixelRatio, 0, (mapSize[0] - width) * pixelRatio, mapSize[1] * pixelRatio);
-    ctx.clip();
-};
-
-const swipePostrender = (event: any) => {
-    const ctx = event.context;
-    ctx.restore();
-};
 
 const handleUploadSuccess = async (asset: any) => {
     // Reload data
@@ -770,6 +1844,180 @@ const handleVisualizeNetCDF = (data: any) => {
     ElMessage.success(`已渲染 ${data.variable} 热力图`);
 };
 
+const loadLocalRasterOverlays = async () => {
+    try {
+        const overlays = await geoDataApi.getLocalRasterOverlays();
+        localRasterOverlays.value = overlays;
+        refreshLocalOverlayGuides(overlays);
+
+        for (const overlay of overlays) {
+            const layerId = getLocalRasterLayerId(overlay.id);
+            const imageExtent = transformExtent(overlay.extent, 'EPSG:4326', 'EPSG:3857');
+            const token = localStorage.getItem('token');
+
+            addGeoTiffOverlayLayer({
+                id: layerId,
+                url: geoDataApi.getLocalRasterFileUrl(overlay.id),
+                extent: imageExtent as [number, number, number, number],
+                opacity: overlay.opacity / 100,
+                zIndex: 910,
+                minZoom: overlay.min_zoom,
+                visible: false,
+                nodata: overlay.nodata,
+                bandCount: overlay.band_count,
+                rasterMin: overlay.raster_min,
+                rasterMax: overlay.raster_max,
+                token,
+            });
+
+            layerConfig.value[getLocalRasterLayerKey(overlay.id)] = {
+                visible: true,
+                opacity: overlay.opacity,
+                name: overlay.name,
+            };
+        }
+
+        syncLocalRasterOverlayVisibility();
+
+        if (overlays.length > 0) {
+            const [overlay] = overlays;
+            const hasExplicitView =
+                Boolean(route.query.lat && route.query.lon) ||
+                Boolean(route.query.x && route.query.y);
+            if (!hasExplicitView && !hasAutoFocusedLocalOverlay.value) {
+                fitLocalOverlay(overlay);
+                hasAutoFocusedLocalOverlay.value = true;
+            }
+            ElNotification({
+                title: '本地地形影像已挂载',
+                message: `已找到 ${overlay.name}，缩放到 ${overlay.min_zoom} 级后会自动显示地质影像，可点击边界或中心点下载 TIF。`,
+                type: 'success',
+                duration: 4200,
+                offset: 80,
+            });
+        }
+    } catch (error) {
+        console.warn('Failed to load local raster overlays:', error);
+        ElMessage.error('本地 TIF 影像加载失败，请检查登录状态或影像文件权限');
+    }
+};
+
+const loadForestCarbonOverlay = async (fitToLayer = false) => {
+    try {
+        const overlay = await geoDataApi.getForestCarbonOverlay(forestCarbonMetric.value, forestCarbonYear.value);
+        forestCarbonOverlay.value = overlay;
+        const imageExtent = transformExtent(overlay.extent, 'EPSG:4326', 'EPSG:3857');
+        const token = localStorage.getItem('token');
+
+        addGeoTiffOverlayLayer({
+            id: FOREST_CARBON_LAYER_ID,
+            url: geoDataApi.getForestCarbonRasterUrl(overlay.metric, overlay.year),
+            extent: imageExtent as [number, number, number, number],
+            opacity: layerConfig.value.forestCarbon.opacity / 100,
+            zIndex: 905,
+            minZoom: overlay.min_zoom,
+            visible: layerConfig.value.forestCarbon.visible,
+            nodata: overlay.nodata ?? undefined,
+            bandCount: overlay.band_count,
+            rasterMin: overlay.raster_min,
+            rasterMax: overlay.raster_max,
+            colorRamp: 'carbon',
+            token,
+        });
+
+        layerConfig.value.forestCarbon.name = `${overlay.metric_label} ${overlay.year}`;
+        refreshForestCarbonGuide(overlay);
+
+        if (fitToLayer && map.value) {
+            map.value.getView().fit(imageExtent, {
+                padding: [86, 86, 86, 86],
+                duration: 900,
+                maxZoom: overlay.min_zoom,
+            });
+        }
+    } catch (error: any) {
+        console.error('Failed to load forest carbon overlay:', error);
+        ElMessage.error(error?.message || '森林碳储量栅格加载失败');
+    }
+};
+
+const handleForestCarbonChange = async () => {
+    await withMapLoading(async () => {
+        await loadForestCarbonOverlay(false);
+    });
+};
+
+const loadSouthwestTemperatureDataset = async () => {
+    try {
+        const dataset = await geoDataApi.getSouthwestTemperatureDataset();
+        southwestTemperatureDataset.value = dataset;
+        refreshSouthwestTemperatureGuide(dataset);
+    } catch (error: any) {
+        console.error('Failed to load southwest temperature dataset:', error);
+        ElMessage.error(error?.message || '西南温度数据集加载失败');
+    }
+};
+
+const loadBadalingImageryDataset = async () => {
+    try {
+        const dataset = await geoDataApi.getBadalingImageryDataset();
+        badalingImageryDataset.value = dataset;
+        refreshBadalingImageryGuide(dataset);
+        const token = localStorage.getItem('token');
+
+        dataset.levels.forEach((levelInfo) => {
+            levelInfo.tiles.forEach((tile) => {
+                const imageExtent = transformExtent(tile.extent, 'EPSG:4326', 'EPSG:3857');
+                addGeoTiffOverlayLayer({
+                    id: getBadalingLayerId(levelInfo.level, tile.tile_id),
+                    url: geoDataApi.getBadalingImageryRasterUrl(levelInfo.level, tile.tile_id),
+                    extent: imageExtent as [number, number, number, number],
+                    opacity: layerConfig.value.badalingImagery.opacity / 100,
+                    zIndex: 912,
+                    minZoom: levelInfo.min_zoom,
+                    maxZoom: levelInfo.max_zoom ?? undefined,
+                    visible: layerConfig.value.badalingImagery.visible,
+                    bandCount: tile.band_count,
+                    token,
+                });
+            });
+        });
+    } catch (error: any) {
+        console.error('Failed to load Badaling imagery dataset:', error);
+        ElMessage.error(error?.message || '八达岭镇影像加载失败');
+    }
+};
+
+const loadHepingjieImageryDataset = async () => {
+    try {
+        const dataset = await geoDataApi.getHepingjieImageryDataset();
+        hepingjieImageryDataset.value = dataset;
+        refreshHepingjieImageryGuide(dataset);
+        const token = localStorage.getItem('token');
+
+        dataset.levels.forEach((levelInfo) => {
+            levelInfo.tiles.forEach((tile) => {
+                const imageExtent = transformExtent(tile.extent, 'EPSG:4326', 'EPSG:3857');
+                addGeoTiffOverlayLayer({
+                    id: getHepingjieLayerId(levelInfo.level, tile.tile_id),
+                    url: geoDataApi.getHepingjieImageryRasterUrl(levelInfo.level, tile.tile_id),
+                    extent: imageExtent as [number, number, number, number],
+                    opacity: layerConfig.value.hepingjieImagery.opacity / 100,
+                    zIndex: 913,
+                    minZoom: levelInfo.min_zoom,
+                    maxZoom: levelInfo.max_zoom ?? undefined,
+                    visible: layerConfig.value.hepingjieImagery.visible,
+                    bandCount: tile.band_count,
+                    token,
+                });
+            });
+        });
+    } catch (error: any) {
+        console.error('Failed to load Hepingjie imagery dataset:', error);
+        ElMessage.error(error?.message || '和平街街道影像加载失败');
+    }
+};
+
 // Init Map
 onMounted(async () => {
   await nextTick();
@@ -803,22 +2051,17 @@ onMounted(async () => {
             // Sync Zoom Slider
             const zoom = mapInstance.getView().getZoom();
             if (zoom) zoomLevel.value = zoom;
-            
-            // Sync 3D View State
-            if (is3DActive.value) {
-                const center = mapInstance.getView().getCenter();
-                if (center && zoom) {
-                    const lonLat = toLonLat(center);
-                    const extent = mapInstance.getView().calculateExtent(mapInstance.getSize());
-                    const lonLatExtent = transformExtent(extent, 'EPSG:3857', 'EPSG:4326') as [number, number, number, number];
-                    
-                    viewState.value = {
-                        center: lonLat as [number, number],
-                        zoom: zoom,
-                        extent: lonLatExtent
-                    };
-                }
+            syncHeiheQuickLocateVisibility();
+            syncLocalRasterOverlayVisibility();
+            void refreshViewportGeoData();
+            if (shouldFetchCentralAsiaViewportData(false)) {
+              void withMapLoading(async () => {
+                await loadCentralAsiaViewportData(false);
+              });
+            } else {
+              void loadCentralAsiaViewportData(false);
             }
+
           });
           
           clearLayers();
@@ -837,13 +2080,29 @@ onMounted(async () => {
 
           // Mock Data Layer (Cluster)
           addClusterLayer(geoPointSource, 60, 'boreholes');
+          ensureHeiheLayers();
+          ensureGrasslandLayers();
+          ensureCentralAsiaLayers();
 
           // Load Data
           console.log('Loading geo data...');
-          await loadGeoData(geoPointSource);
+          await withMapLoading(async () => {
+            await loadGeoData(geoPointSource);
+            await loadLocalRasterOverlays();
+            await loadForestCarbonOverlay(false);
+            await loadHeiheSites();
+            await loadHeiheGrassland();
+            await loadSouthwestTemperatureDataset();
+            await loadBadalingImageryDataset();
+            await loadHepingjieImageryDataset();
+            await loadCentralAsiaCountries();
+            await loadCentralAsiaViewportData(true);
+          });
 
           // Check Route Query for FlyTo or Initial View
           // Priority: 1. ID/Name (Gallery) 2. Lon/Lat/Z (Share)
+          const handledCatalogTarget = applyCatalogRouteTarget();
+
           if (route.query.lat && route.query.lon) {
               const lat = parseFloat(route.query.lat as string);
               const lon = parseFloat(route.query.lon as string);
@@ -857,28 +2116,15 @@ onMounted(async () => {
                   
                   // Delay slightly to ensure map is fully rendered
                   setTimeout(() => {
-                      if (route.query.id) {
-                          flyTo(coords, zoom);
-                          const name = (route.query.name as string) || '目标位置';
-                          setNavigationMarker(coords, name, true);
-                          
-                          const id = parseInt(route.query.id as string);
-                          const feature = geoPointSource.getFeatures().find(f => f.get('id') === id);
-                          if (feature) {
-                              const props = feature.getProperties();
-                              currentFeature.value = props as GeoDataItem;
-                              sidePanelVisible.value = true;
-                              
-                              highlightSource.clear();
-                              const clone = feature.clone();
-                              highlightSource.addFeature(clone);
-                          }
-                          ElMessage.success(`已定位到: ${name}`);
+                      if (route.query.share === 'feature' || route.query.id || route.query.dataset || route.query.overlay) {
+                          openSharedFeatureFromQuery(coords, zoom);
                       } else {
                           // Share view logic: Direct setCenter for instant restore
                           mapInstance.getView().setCenter(coords);
                           mapInstance.getView().setZoom(zoom);
-                          ElMessage.success('已恢复分享视图');
+                          if (!handledCatalogTarget) {
+                              ElMessage.success('已恢复分享视图');
+                          }
                       }
                   }, 500);
               }
@@ -889,13 +2135,51 @@ onMounted(async () => {
           if (map.value) {
             map.value.addLayer(highlightLayer);
             map.value.addLayer(bufferLayer);
+            map.value.addLayer(localOverlayGuideLayer);
           }
 
           initInteractions(
-            (featureProps) => {
+            async (featureProps) => {
                 // Feature Click Handler
                 console.log('Feature clicked:', featureProps);
-                currentFeature.value = featureProps as GeoDataItem;
+                highlightSource.clear();
+                if (featureProps?.geometry) {
+                  const clone = new Feature(featureProps.geometry.clone());
+                  const props = { ...featureProps };
+                  delete props.geometry;
+                  clone.setProperties(props);
+                  highlightSource.addFeature(clone);
+                }
+
+                if (featureProps?.dataset_id === 'heihe-soil-respiration') {
+                    fitFeatureOnMap(featureProps);
+                    if (featureProps.site_key && featureProps.sub_type === 'HeiheSite') {
+                        try {
+                            await loadHeiheObservations(featureProps.site_key);
+                        } catch (error: any) {
+                            console.error('Failed to load Heihe observations:', error);
+                            ElMessage.error(error?.message || '黑河观测点加载失败');
+                        }
+                    }
+                } else if (featureProps?.dataset_id === 'heihe-grassland-1988') {
+                    grasslandSelectedId.value = featureProps.id ?? featureProps.GRASSF_ID ?? null;
+                    grasslandPolygonLayer?.changed();
+                    grasslandPointLayer?.changed();
+                    fitFeatureOnMap(featureProps);
+                } else if (featureProps?.dataset_id === 'central-asia-desert-urban-2012-2016') {
+                    centralAsiaSelectedId.value = featureProps.id ?? null;
+                    centralAsiaCountriesLayer?.changed();
+                    centralAsiaUrbanPolygonLayer?.changed();
+                    centralAsiaUrbanPointLayer?.changed();
+                    fitFeatureOnMap(featureProps);
+                } else if (featureProps?.dataset_id === 'badaling-town-imagery') {
+                    fitFeatureOnMap(featureProps);
+                } else if (featureProps?.dataset_id === 'hepingjie-street-imagery') {
+                    fitFeatureOnMap(featureProps);
+                } else if (featureProps?.dataset_id === 'china-forest-carbon-2002-2021') {
+                    fitFeatureOnMap(featureProps);
+                }
+                setSelectedFeatureState(featureProps as GeoDataItem);
                 sidePanelVisible.value = true;
             },
             (extent) => {
@@ -942,12 +2226,13 @@ onMounted(async () => {
                     // Update state correctly for InfoPanel logic
                     if (selected.length === 1) {
                         // Single feature selected
-                        currentFeature.value = selected[0];
+                        setSelectedFeatureState(selected[0]);
                         selectedItems.value = selected; // InfoPanel might ignore this due to v-if, but good to keep
                     } else {
                         // Multi selection
-                        currentFeature.value = null;
+                        setSelectedFeatureState(null);
                         selectedItems.value = selected;
+                        mapStore.selectFeatures(selected);
                     }
                     sidePanelVisible.value = true;
                 } else {
@@ -957,74 +2242,23 @@ onMounted(async () => {
             () => {
                 // Blank Click Handler
                 if (!isNearbyActive.value) {
-                    currentFeature.value = null;
+                    setSelectedFeatureState(null);
                     sidePanelVisible.value = false;
                     highlightSource.clear(); // Clear highlights
+                    grasslandSelectedId.value = null;
+                    grasslandPolygonLayer?.changed();
+                    grasslandPointLayer?.changed();
+                    centralAsiaSelectedId.value = null;
+                    centralAsiaCountriesLayer?.changed();
+                    centralAsiaUrbanPolygonLayer?.changed();
+                    centralAsiaUrbanPointLayer?.changed();
                     bufferSource.clear();
-                    closePopup();
-                }
-            },
-            async (_lon, _lat, coords) => {
-                const lonLat = toLonLat(coords);
-
-                if (isNearbyActive.value) {
-                    // Buffer analysis is now handled by Draw interaction
-                    return;
-                }
-
-                // Identify Handler
-                // Show loading
-                // We can reuse popup for loading or result
-                popupInfo.value = { name: '查询中...', address: '正在识别周边数据...', loading: true };
-                if (popupOverlay) {
-                    popupOverlay.setPosition(coords);
-                }
-                
-                try {
-                    const res = await geoDataApi.identify(lonLat[0], lonLat[1]);
-                    // Access the data array from response - make sure we handle different response structures
-                    const data = Array.isArray(res) ? res : (res.data || []);
-                    
-                    if (data && data.length > 0) {
-                        // Found something
-                        // For now just show the first one or a list summary
-                        const first = data[0];
-                        popupInfo.value = {
-                            ...first,
-                            address: `发现 ${data.length} 个目标`,
-                            loading: false
-                        };
-                    } else {
-                        // No result
-                        popupInfo.value = {
-                            name: '无数据',
-                            address: '该位置周边 100m 无地质数据',
-                            loading: false
-                        };
-                    }
-                } catch (e) {
-                    console.error(e);
-                    popupInfo.value = {
-                        name: '查询失败',
-                        address: '服务请求异常',
-                        loading: false
-                    };
                 }
             }
           );
 
           if (mouseTooltipRef.value) {
               initTooltip(mouseTooltipRef.value);
-          }
-          
-          if (popupRef.value && map.value) {
-            popupOverlay = new Overlay({
-              element: popupRef.value,
-              positioning: 'bottom-center',
-              stopEvent: true,
-              offset: [0, -10]
-            });
-            map.value.addOverlay(popupOverlay);
           }
           
           console.log('MapView initialization complete');
@@ -1073,20 +2307,12 @@ const handleSmartSearchResult = (results: GeoDataItem[]) => {
   
   // Show side panel
   if (results.length === 1) {
-      currentFeature.value = results[0];
+      setSelectedFeatureState(results[0]);
   } else {
-      currentFeature.value = null; // Multi mode
+      setSelectedFeatureState(null); // Multi mode
+      mapStore.selectFeatures(results);
   }
   sidePanelVisible.value = true;
-};
-
-const toggleBaseMap = () => {
-    if (currentBaseMap.value === 'vector') {
-        currentBaseMap.value = 'satellite';
-    } else {
-        currentBaseMap.value = 'vector';
-    }
-    updateBaseMapLayers();
 };
 
 const updateBaseMapLayers = () => {
@@ -1145,6 +2371,49 @@ const handleLayerVisibilityChange = ({ key, visible }: { key: string, visible: b
             if (layer) {
                 layer.setVisible(visible);
             }
+        } else if (key === 'heiheSites') {
+            heiheSiteLayer?.setVisible(visible);
+        } else if (key === 'heiheObservations') {
+            heiheObservationLayer?.setVisible(visible);
+        } else if (key === 'grasslandPolygons') {
+            grasslandPolygonLayer?.setVisible(visible);
+        } else if (key === 'grasslandPoints') {
+            grasslandPointLayer?.setVisible(visible);
+        } else if (key === 'forestCarbon') {
+            layers.value.find(l => l.get('id') === FOREST_CARBON_LAYER_ID)?.setVisible(visible);
+        } else if (key === 'centralAsiaCountries') {
+            centralAsiaCountriesLayer?.setVisible(visible);
+        } else if (key === 'centralAsiaUrbanPoints') {
+            centralAsiaUrbanPointLayer?.setVisible(visible);
+            if (shouldFetchCentralAsiaViewportData(true)) {
+                void withMapLoading(async () => {
+                    await loadCentralAsiaViewportData(true);
+                });
+            } else {
+                void loadCentralAsiaViewportData(true);
+            }
+        } else if (key === 'centralAsiaUrbanPolygons') {
+            centralAsiaUrbanPolygonLayer?.setVisible(visible);
+            if (shouldFetchCentralAsiaViewportData(true)) {
+                void withMapLoading(async () => {
+                    await loadCentralAsiaViewportData(true);
+                });
+            } else {
+                void loadCentralAsiaViewportData(true);
+            }
+        } else if (key === 'badalingImagery') {
+            layers.value
+                .filter((layer) => String(layer.get('id') || '').startsWith(BADALING_IMAGERY_LAYER_PREFIX))
+                .forEach((layer) => layer.setVisible(visible));
+        } else if (key === 'hepingjieImagery') {
+            layers.value
+                .filter((layer) => String(layer.get('id') || '').startsWith(HEPINGJIE_IMAGERY_LAYER_PREFIX))
+                .forEach((layer) => layer.setVisible(visible));
+        } else {
+            const overlayId = getOverlayIdFromLayerKey(key);
+            if (overlayId) {
+                syncLocalRasterOverlayVisibility();
+            }
         }
     }
 };
@@ -1167,38 +2436,76 @@ const handleLayerOpacityChange = ({ key, opacity }: { key: string, opacity: numb
             if (layer) {
                 layer.setOpacity(val);
             }
+        } else if (key === 'heiheSites') {
+            heiheSiteLayer?.setOpacity(val);
+        } else if (key === 'heiheObservations') {
+            heiheObservationLayer?.setOpacity(val);
+        } else if (key === 'grasslandPolygons') {
+            grasslandPolygonLayer?.setOpacity(val);
+        } else if (key === 'grasslandPoints') {
+            grasslandPointLayer?.setOpacity(val);
+        } else if (key === 'forestCarbon') {
+            layers.value.find(l => l.get('id') === FOREST_CARBON_LAYER_ID)?.setOpacity(val);
+        } else if (key === 'centralAsiaCountries') {
+            centralAsiaCountriesLayer?.setOpacity(val);
+        } else if (key === 'centralAsiaUrbanPoints') {
+            centralAsiaUrbanPointLayer?.setOpacity(val);
+        } else if (key === 'centralAsiaUrbanPolygons') {
+            centralAsiaUrbanPolygonLayer?.setOpacity(val);
+        } else if (key === 'badalingImagery') {
+            layers.value
+                .filter((layer) => String(layer.get('id') || '').startsWith(BADALING_IMAGERY_LAYER_PREFIX))
+                .forEach((layer) => layer.setOpacity(val));
+        } else if (key === 'hepingjieImagery') {
+            layers.value
+                .filter((layer) => String(layer.get('id') || '').startsWith(HEPINGJIE_IMAGERY_LAYER_PREFIX))
+                .forEach((layer) => layer.setOpacity(val));
+        } else {
+            const overlayId = getOverlayIdFromLayerKey(key);
+            if (overlayId) {
+                const layer = layers.value.find(l => l.get('id') === getLocalRasterLayerId(overlayId));
+                if (layer) {
+                    layer.setOpacity(val);
+                }
+            }
         }
     }
 };
 
 const loadGeoData = async (source: VectorSource) => {
     try {
-        const res = await geoDataApi.getList();
-        console.log('Geo data API response:', res);
-        const data = Array.isArray(res) ? res : (res as any).data || [];
+        const bbox = getCurrentMapBBox();
+        const bboxKey = buildBBoxKey(bbox);
+        await geodataStore.fetchList(bbox);
+        if (geodataStore.error) {
+            throw new Error(geodataStore.error);
+        }
+
+        const data = geodataStore.items || [];
         
         if (data.length === 0) {
             console.warn('No geo data returned from API');
         }
 
-        rawFeatures.value = data; // Sync for Cesium
-
         source.clear();
-        data.forEach((item: GeoDataItem) => {
-             if (item.center_x && item.center_y) {
-                 const coords = toMapCoords([item.center_x, item.center_y], item.srid);
-                 const feature = new Feature({
-                     geometry: new Point(coords),
-                     ...item
-                 });
-                 source.addFeature(feature);
-             }
-        });
+        appendIndexFeaturesToSource(source, data);
+        lastDataBBoxKey.value = bboxKey;
         console.log(`Loaded ${source.getFeatures().length} features into source`);
     } catch (e: any) {
         console.error('Failed to load geo data:', e);
         ElMessage.error(`数据加载失败: ${e.message || '请检查接口权限'}`);
     }
+};
+
+const refreshViewportGeoData = async () => {
+    const bbox = getCurrentMapBBox();
+    const bboxKey = buildBBoxKey(bbox);
+    if (!bboxKey || bboxKey === lastDataBBoxKey.value) {
+        return;
+    }
+    await withMapLoading(async () => {
+        await loadGeoData(geoPointSource);
+    });
 };
 
 const handleLocation = () => {
@@ -1218,49 +2525,19 @@ const handleLocation = () => {
     );
 };
 
-const handleShare = async () => {
-    if (!map.value) return;
-    const view = map.value.getView();
-    const center = view.getCenter();
-    const zoom = view.getZoom();
-    
-    if (center && zoom) {
-        const lonLat = toLonLat(center);
-        const lon = lonLat[0].toFixed(6);
-        const lat = lonLat[1].toFixed(6);
-        const z = zoom.toFixed(2);
-        
-        const url = new URL(window.location.href);
-        url.searchParams.set('lon', lon);
-        url.searchParams.set('lat', lat);
-        url.searchParams.set('z', z);
-        // Remove other params if needed or keep them?
-        // Let's keep others but remove 'id' if we just want to share view
-        // But user requirement is just "generate form like ?lon=...".
-        // Let's clean up ID to avoid confusion if sharing just view
-        url.searchParams.delete('id');
-        url.searchParams.delete('name');
-        
-        try {
-            await navigator.clipboard.writeText(url.toString());
-            ElMessage.success('链接已复制到剪贴板');
-        } catch (err) {
-            ElMessage.error('复制失败');
-            console.error('Copy failed', err);
-        }
-    }
-};
-
-const clearSelection = () => {
-    clearInteractions();
-    sidePanelVisible.value = false;
-};
-
 // Removed duplicate handleLogout
 
 const closeSidePanel = () => {
     sidePanelVisible.value = false;
-    currentFeature.value = null;
+    setSelectedFeatureState(null);
+    highlightSource.clear();
+    grasslandSelectedId.value = null;
+    grasslandPolygonLayer?.changed();
+    grasslandPointLayer?.changed();
+    centralAsiaSelectedId.value = null;
+    centralAsiaCountriesLayer?.changed();
+    centralAsiaUrbanPolygonLayer?.changed();
+    centralAsiaUrbanPointLayer?.changed();
 };
 
 const downloadBlob = (blob: Blob, filename: string) => {
@@ -1275,9 +2552,53 @@ const downloadBlob = (blob: Blob, filename: string) => {
 };
 
 const handleDownload = async (item: GeoDataItem) => {
+    if (item.downloadable === false) {
+        ElMessage.info('该点用于定位图层范围，不提供文件下载');
+        return;
+    }
     try {
-        const blob = await geoDataApi.downloadBatch([item.id]);
-        const filename = `${item.name || 'geodata'}.zip`;
+        const isLocalRaster = item.source === 'local-overlay' && item.overlay_id;
+        const isHeiheDataset = item.dataset_id === 'heihe-soil-respiration';
+        const isGrasslandDataset = item.dataset_id === 'heihe-grassland-1988';
+        const isForestCarbonDataset = item.dataset_id === 'china-forest-carbon-2002-2021';
+        const isSouthwestTemperatureDataset = item.dataset_id === 'southwest-china-temperature-90ka';
+        const isCentralAsiaDataset = item.dataset_id === 'central-asia-desert-urban-2012-2016';
+        const isBadalingDataset = item.dataset_id === 'badaling-town-imagery';
+        const isHepingjieDataset = item.dataset_id === 'hepingjie-street-imagery';
+        const blob = isHeiheDataset
+            ? await geoDataApi.downloadHeiheDataset()
+            : isGrasslandDataset
+              ? await geoDataApi.downloadHeiheGrasslandDataset()
+            : isForestCarbonDataset
+              ? await geoDataApi.downloadForestCarbonRaster((item.metric || forestCarbonMetric.value) as 'AGBC' | 'BGBC', Number(item.year || forestCarbonYear.value))
+            : isSouthwestTemperatureDataset
+              ? await geoDataApi.downloadSouthwestTemperatureDataset()
+            : isCentralAsiaDataset
+              ? await geoDataApi.downloadCentralAsiaDesertDataset()
+            : isBadalingDataset
+              ? await geoDataApi.downloadBadalingImageryDataset()
+            : isHepingjieDataset
+              ? await geoDataApi.downloadHepingjieImageryDataset()
+            : isLocalRaster
+              ? await geoDataApi.downloadLocalRasterOverlay(item.overlay_id!)
+              : await geoDataApi.downloadBatch([item.id]);
+        const filename = isLocalRaster
+            ? `${item.name || item.overlay_id}.tif`
+            : isHeiheDataset
+              ? 'heihe_soil_respiration_raw_dataset.zip'
+            : isGrasslandDataset
+              ? 'heihe_grassland_1988_raw_dataset.zip'
+            : isForestCarbonDataset
+              ? `${item.metric || forestCarbonMetric.value}Y${item.year || forestCarbonYear.value}.tif`
+            : isSouthwestTemperatureDataset
+              ? (southwestTemperatureDataset.value?.file_name || 'southwest_temperature_dataset.xlsx')
+            : isCentralAsiaDataset
+              ? 'central_asia_desert_urban_2012_2016_raw_dataset.zip'
+            : isBadalingDataset
+              ? 'badaling_town_imagery_raw_dataset.zip'
+            : isHepingjieDataset
+              ? 'hepingjie_street_imagery_raw_dataset.zip'
+            : `${item.name || 'geodata'}.zip`;
         downloadBlob(blob, filename);
     } catch (e: any) {
         ElMessage.error(e?.message || '下载失败');
@@ -1285,9 +2606,71 @@ const handleDownload = async (item: GeoDataItem) => {
 };
 
 const handlePreview = (item: GeoDataItem) => {
-    if (item.center_x && item.center_y) {
+    if (item.dataset_id === 'heihe-soil-respiration') {
+        fitFeatureOnMap(item);
+        if (item.site_key && item.sub_type === 'HeiheSite') {
+            loadHeiheObservations(item.site_key);
+        }
+        return;
+    }
+
+    if (item.dataset_id === 'heihe-grassland-1988') {
+        grasslandSelectedId.value = item.id ?? null;
+        grasslandPolygonLayer?.changed();
+        grasslandPointLayer?.changed();
+        fitFeatureOnMap(item);
+        return;
+    }
+
+    if (item.dataset_id === 'central-asia-desert-urban-2012-2016') {
+        centralAsiaSelectedId.value = item.id ?? null;
+        centralAsiaCountriesLayer?.changed();
+        centralAsiaUrbanPolygonLayer?.changed();
+        centralAsiaUrbanPointLayer?.changed();
+        fitFeatureOnMap(item);
+        return;
+    }
+
+    if (item.dataset_id === 'badaling-town-imagery') {
+        fitFeatureOnMap(item);
+        return;
+    }
+
+    if (item.dataset_id === 'hepingjie-street-imagery') {
+        fitFeatureOnMap(item);
+        return;
+    }
+
+    if (item.dataset_id === 'china-forest-carbon-2002-2021') {
+        fitFeatureOnMap(item);
+        return;
+    }
+
+    if (item.dataset_id === 'southwest-china-temperature-90ka') {
+        fitFeatureOnMap(item);
+        return;
+    }
+
+    let fittedToExtent = false;
+
+    if (item.extent && item.extent.length === 4 && map.value) {
+        try {
+            const sourceProjection = item.srid === 3857 ? 'EPSG:3857' : `EPSG:${item.srid || 4326}`;
+            const mapExtent = sourceProjection === 'EPSG:3857'
+                ? item.extent
+                : transformExtent(item.extent, sourceProjection, 'EPSG:3857');
+            map.value.getView().fit(mapExtent, { padding: [100, 100, 100, 100], duration: 900, maxZoom: 11 });
+            fittedToExtent = true;
+        } catch (error) {
+            console.warn('Failed to fit extent, fallback to center:', error);
+        }
+    }
+
+    if (typeof item.center_x === 'number' && typeof item.center_y === 'number') {
         const coords = toMapCoords([item.center_x, item.center_y], item.srid);
-        flyTo(coords);
+        if (!fittedToExtent) {
+            flyTo(coords);
+        }
         setNavigationMarker(coords, item.name);
     }
 };
@@ -1325,6 +2708,7 @@ onUnmounted(() => {
     if (map.value) {
         map.value.setTarget(undefined);
         clearLayers();
+        localOverlayGuideSource.clear();
         removeInteractions();
         // Clear sources to free memory
         navigationSource.clear();
@@ -1392,100 +2776,153 @@ onUnmounted(() => {
     border: none;
 }
 
-.map-popup-overlay {
+.map-hall-panel {
   position: absolute;
-  min-width: 200px;
-}
-
-.popup-content {
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-radius: 16px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
-  padding: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  animation: popup-fade-in 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-  position: relative;
-}
-
-.popup-header {
+  top: 20px;
+  left: 20px;
+  z-index: 96;
+  width: 320px;
+  height: calc(100% - 40px);
   display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  box-shadow: 0 12px 32px rgba(19, 36, 53, 0.12);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.map-hall-header {
+  min-height: 64px;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.86);
 }
 
-.popup-title {
-  font-weight: 600;
-  font-size: 16px;
-  color: #1d1d1f;
+.map-hall-header h2 {
   margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  color: #1f2937;
+  letter-spacing: 0.01em;
 }
 
-.popup-body {
-  font-size: 14px;
-  color: #86868b;
+.map-hall-modules {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
-.popup-address {
+.map-hall-section {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(226, 232, 240, 0.84);
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(248, 251, 255, 0.56);
+}
+
+.map-hall-section-title {
+  height: 48px;
+  padding: 0 14px;
+  border: 0;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.72);
+  background: rgba(255, 255, 255, 0.82);
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-bottom: 12px;
+  justify-content: space-between;
+  color: #374151;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: default;
 }
 
-.popup-actions {
+.map-hall-section-count {
+  min-width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #1d4ed8;
+  background: rgba(59, 130, 246, 0.11);
+  font-size: 12px;
+}
+
+.map-hall-list {
+  padding: 12px;
   display: flex;
-  gap: 8px;
-  justify-content: flex-end;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.ripple-container {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+.map-hall-entry {
   width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: -1;
+  padding: 13px 14px;
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 251, 255, 0.98));
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
-.ripple {
-  width: 20px;
-  height: 20px;
-  background: rgba(0, 113, 227, 0.4);
-  border-radius: 50%;
-  position: absolute;
-  top: 100%; /* Anchor to bottom point */
-  left: 50%;
-  transform: translate(-50%, -50%);
-  animation: ripple-effect 2s infinite;
+.map-hall-entry:hover {
+  transform: translateY(-1px);
+  border-color: rgba(64, 158, 255, 0.38);
+  box-shadow: 0 10px 20px rgba(31, 78, 121, 0.1);
 }
 
-@keyframes ripple-effect {
-  0% {
-    width: 0;
-    height: 0;
-    opacity: 0.8;
-  }
-  100% {
-    width: 100px;
-    height: 100px;
-    opacity: 0;
-  }
+.map-hall-entry-main,
+.map-hall-entry-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
-@keyframes popup-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px) scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+.map-hall-entry-title {
+  min-width: 0;
+  color: #25324a;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.map-hall-entry-region {
+  flex-shrink: 0;
+  padding: 2px 9px;
+  border-radius: 999px;
+  color: #66748a;
+  background: rgba(100, 116, 139, 0.09);
+  font-size: 11px;
+}
+
+.map-hall-entry-meta {
+  margin-top: 8px;
+  color: #6b7280;
+  font-size: 11px;
+}
+
+.map-hall-entry-meta span:last-child {
+  color: #2d6a4f;
+}
+
+.map-hall-summary {
+  padding: 12px 20px;
+  border-top: 1px solid rgba(226, 232, 240, 0.86);
+  color: #8a94a6;
+  font-size: 12px;
+  text-align: right;
+  background: rgba(255, 255, 255, 0.84);
 }
 
 .mouse-tooltip {
@@ -1670,6 +3107,95 @@ onUnmounted(() => {
   width: auto;
   min-width: 320px;
   transition: all 0.3s ease;
+}
+
+.left-overview-panel {
+  position: absolute;
+  top: 96px;
+  left: 20px;
+  z-index: 96;
+}
+
+.heihe-locate-btn {
+  min-width: 164px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.88);
+  color: #21461d;
+  border-radius: 16px;
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: 0 8px 24px rgba(33, 70, 29, 0.16);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.heihe-locate-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 28px rgba(33, 70, 29, 0.22);
+  background: rgba(246, 251, 244, 0.96);
+}
+
+.forest-carbon-panel {
+  position: absolute;
+  top: 96px;
+  right: 22px;
+  z-index: 96;
+  width: 252px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(249, 252, 246, 0.9);
+  border: 1px solid rgba(177, 207, 151, 0.52);
+  box-shadow: 0 10px 28px rgba(39, 90, 53, 0.16);
+}
+
+.forest-carbon-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #183d25;
+  margin-bottom: 8px;
+}
+
+.forest-carbon-controls {
+  display: grid;
+  grid-template-columns: 1fr 82px;
+  gap: 8px;
+}
+
+.carbon-select,
+.year-select {
+  width: 100%;
+}
+
+.forest-carbon-meta {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #4f6b45;
+}
+
+.map-data-loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 140;
+}
+
+.map-data-loading-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 10px 26px rgba(31, 63, 26, 0.16);
+  color: #21461d;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 /* Slide Transitions */

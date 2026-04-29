@@ -1,67 +1,42 @@
 import os
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, Any
 import json
-import base64
-from openai import OpenAI
+import logging
+
+try:
+    from openai import OpenAI
+except ImportError:  # pragma: no cover - optional dependency
+    OpenAI = None
+
+logger = logging.getLogger(__name__)
 
 class AIGeodataClassifier:
     def __init__(self):
-        # Use DashScope API Key
-        self.api_key = os.getenv("DASHSCOPE_API_KEY", "sk-80313781df2f4a30adbaf0224b696835")
+        self.api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
         self.base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
         
         self.client = OpenAI(
             api_key=self.api_key,
             base_url=self.base_url
-        ) if self.api_key else None
+        ) if self.api_key and OpenAI else None
         
-        self.text_model = "qwen3.5-flash" # Updated per user request
-        self.vision_model = "qwen-vl-max" # Keep vision model as is unless specified
+        self.text_model = "qwen3.5-flash"
     
     async def classify_upload(self, file_path: Path, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """
-        智能分类上传的地质数据，支持多模态（视觉+文本）
+        智能分类上传的地质数据，基于文本元数据分析
         """
         if not self.client:
             return self._mock_classification(file_path, metadata)
 
         try:
-            # Check if file is an image (GeoTIFF/IMG/PNG/JPG) for visual analysis
-            is_image = file_path.suffix.lower() in ['.tif', '.tiff', '.img', '.png', '.jpg', '.jpeg']
-            
-            messages = []
-            
-            if is_image:
-                # Encode image to base64
-                # Note: Qwen-VL might have size limits, usually need to resize or use URL.
-                # For local file, base64 is standard for OpenAI compatible API.
-                # But DashScope Qwen-VL often prefers OSS URL. 
-                # Let's try standard base64 data URI first.
-                base64_image = self._encode_image(file_path)
-                
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": self._construct_prompt(file_path, metadata)},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{base64_image}"
-                                }
-                            }
-                        ]
-                    }
-                ]
-                model = self.vision_model
-            else:
-                # Text-only analysis for vector/tabular data
-                messages = [
-                    {"role": "system", "content": "You are an expert geologist and data scientist. Analyze the file metadata and suggest classification, tags, and description."},
-                    {"role": "user", "content": self._construct_prompt(file_path, metadata)}
-                ]
-                model = self.text_model
+            # Text-only analysis for all file types
+            messages = [
+                {"role": "system", "content": "You are an expert geologist and data scientist. Analyze the file metadata and suggest classification, tags, and description."},
+                {"role": "user", "content": self._construct_prompt(file_path, metadata)}
+            ]
+            model = self.text_model
 
             # Call LLM
             # Note: response_format={"type": "json_object"} might not be fully supported by all Qwen versions in compatible mode yet.
@@ -83,7 +58,7 @@ class AIGeodataClassifier:
                 result = json.loads(result_text)
             except:
                 # Fallback if JSON parsing fails
-                print(f"Failed to parse JSON from AI response: {result_text}")
+                logger.warning("Failed to parse JSON from AI response: %s", result_text)
                 return self._mock_classification(file_path, metadata)
             
             return {
@@ -94,12 +69,8 @@ class AIGeodataClassifier:
             }
             
         except Exception as e:
-            print(f"AI Classification failed: {e}")
+            logger.warning("AI Classification failed: %s", e)
             return self._mock_classification(file_path, metadata)
-
-    def _encode_image(self, image_path: Path):
-        with open(image_path, "rb") as image_file:
-            return base64.b64encode(image_file.read()).decode('utf-8')
 
     def _construct_prompt(self, file_path: Path, metadata: Dict) -> str:
         extension = file_path.suffix

@@ -2,6 +2,9 @@ import os
 import sys
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
+from urllib.request import urlopen
+from urllib.error import URLError, HTTPError
+from app.core.config import settings
 
 # 加载 .env 环境变量
 load_dotenv()
@@ -9,9 +12,7 @@ load_dotenv()
 def check_database():
     print("正在检查数据库连接...")
     
-    # 获取数据库连接 URL
-    # 优先使用环境变量，否则使用默认值（与 config.py 保持一致）
-    database_url = os.getenv("DATABASE_URL", "postgresql://mengzh@localhost:5432/postgres")
+    database_url = settings.DATABASE_URL
     # 适配 sqlalchemy
     if database_url.startswith("postgresql://"):
         database_url = database_url.replace("postgresql://", "postgresql+psycopg2://")
@@ -21,7 +22,7 @@ def check_database():
     try:
         engine = create_engine(database_url)
         with engine.connect() as connection:
-            result = connection.execute(text("SELECT 1"))
+            connection.execute(text("SELECT 1"))
             print("✅ 数据库连接成功！")
             
             # 检查 PostGIS 扩展
@@ -32,7 +33,7 @@ def check_database():
             except Exception as e:
                 print("❌ PostGIS 扩展检查失败 (可能是未安装或权限不足)")
                 print(f"   错误信息: {e}")
-                
+        return True
     except Exception as e:
         print("❌ 数据库连接失败！")
         print(f"   错误信息: {e}")
@@ -41,7 +42,32 @@ def check_database():
         print("2. 数据库用户名或密码错误")
         print("3. 数据库不存在")
         print("4. 端口 5432 被占用或不允许连接")
-        sys.exit(1)
+        return False
+
+def check_api_health():
+    health_url = os.getenv("API_HEALTH_URL", "http://127.0.0.1:9988/api/health")
+    print(f"检查后端健康接口: {health_url}")
+    try:
+        with urlopen(health_url, timeout=5) as resp:
+            status_code = resp.getcode()
+            body = resp.read().decode("utf-8", errors="ignore")
+            if status_code == 200 and '"status":"ok"' in body.replace(" ", ""):
+                print("✅ 后端健康检查通过")
+                return True
+            print(f"❌ 后端健康检查失败，状态码: {status_code}，响应: {body[:200]}")
+            return False
+    except HTTPError as e:
+        print(f"❌ 后端健康检查失败，HTTP 错误: {e.code}")
+        return False
+    except URLError as e:
+        print(f"❌ 后端健康检查失败，网络错误: {e}")
+        return False
+    except Exception as e:
+        print(f"❌ 后端健康检查失败: {e}")
+        return False
 
 if __name__ == "__main__":
-    check_database()
+    db_ok = check_database()
+    api_ok = check_api_health()
+    if not db_ok or not api_ok:
+        sys.exit(1)

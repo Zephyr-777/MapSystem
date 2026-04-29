@@ -67,11 +67,36 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue';
-import * as echarts from 'echarts';
+import { CanvasRenderer } from 'echarts/renderers';
+import { PieChart, BarChart } from 'echarts/charts';
+import {
+  LegendComponent,
+  GridComponent,
+  TooltipComponent,
+  type LegendComponentOption,
+  type GridComponentOption,
+  type TooltipComponentOption,
+} from 'echarts/components';
+import {
+  init,
+  use,
+  graphic,
+  type ECharts,
+  type ComposeOption,
+} from 'echarts/core';
 import { Refresh, Close } from '@element-plus/icons-vue';
 import { geoDataApi } from '@/api/geodata';
 import { ElMessage } from 'element-plus';
 import { useAuthStore } from '@/stores/auth';
+
+use([CanvasRenderer, PieChart, BarChart, LegendComponent, GridComponent, TooltipComponent]);
+
+type PieSeriesOption = ComposeOption<
+  TooltipComponentOption | LegendComponentOption | import('echarts/charts').PieSeriesOption
+>;
+type BarSeriesOption = ComposeOption<
+  TooltipComponentOption | GridComponentOption | import('echarts/charts').BarSeriesOption
+>;
 
 const authStore = useAuthStore();
 const isAdmin = computed(() => authStore.user?.role === 'admin');
@@ -79,8 +104,8 @@ const isAdmin = computed(() => authStore.user?.role === 'admin');
 const loading = ref(false);
 const pieChartRef = ref<HTMLDivElement | null>(null);
 const barChartRef = ref<HTMLDivElement | null>(null);
-let pieChart: echarts.ECharts | null = null;
-let barChart: echarts.ECharts | null = null;
+let pieChart: ECharts | null = null;
+let barChart: ECharts | null = null;
 
 const isStatsVisible = ref(false);
 
@@ -128,17 +153,17 @@ const refreshData = async () => {
 
 const initCharts = () => {
   if (pieChartRef.value) {
-    pieChart = echarts.init(pieChartRef.value);
+    pieChart = init(pieChartRef.value);
   }
   if (barChartRef.value) {
-    barChart = echarts.init(barChartRef.value);
+    barChart = init(barChartRef.value);
   }
 };
 
 const updatePieChart = (data: Array<{name: string, value: number}>) => {
   if (!pieChart) return;
   
-  const option = {
+  const option: PieSeriesOption = {
     tooltip: {
       trigger: 'item',
       formatter: '{b}: {c} ({d}%)'
@@ -197,7 +222,7 @@ const updatePieChart = (data: Array<{name: string, value: number}>) => {
 const updateBarChart = (data: { categories: string[], values: number[] }) => {
   if (!barChart) return;
   
-  const option = {
+  const option: BarSeriesOption = {
     tooltip: {
       trigger: 'axis',
       axisPointer: {
@@ -259,7 +284,7 @@ const updateBarChart = (data: { categories: string[], values: number[] }) => {
         barWidth: '40%',
         data: data.values,
         itemStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          color: new graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: '#5AC8FA' },
             { offset: 1, color: '#0071E3' }
           ]),

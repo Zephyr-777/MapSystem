@@ -22,43 +22,68 @@
       </div>
     </div>
 
+    <div class="filter-strip glass-panel">
+      <div class="filter-block">
+        <span class="filter-title">地区</span>
+        <el-segmented v-model="filters.regionId" :options="regionOptions" size="small" />
+      </div>
+      <div class="filter-block">
+        <span class="filter-title">类型</span>
+        <el-segmented v-model="filters.dataTypeId" :options="typeOptions" size="small" />
+      </div>
+      <div class="filter-block">
+        <span class="filter-title">来源</span>
+        <el-segmented v-model="filters.sourceId" :options="sourceOptions" size="small" />
+      </div>
+      <el-button link class="reset-filter" @click="resetFilters">重置筛选</el-button>
+    </div>
+
     <div class="gallery-content custom-scrollbar">
       <div v-if="loading" class="loading-state">
         <el-skeleton :rows="3" animated />
       </div>
       
-      <div v-else-if="assets.length === 0" class="empty-state">
+      <div v-else-if="displayCards.length === 0" class="empty-state">
         <el-empty description="暂无公开地质数据" />
       </div>
 
       <div v-else class="card-grid">
         <div 
-          v-for="asset in assets" 
-          :key="asset.id" 
+          v-for="card in displayCards" 
+          :key="card.key" 
           class="asset-card glass-panel"
-          @mouseenter="hoveredId = asset.id"
+          @mouseenter="hoveredId = card.key"
           @mouseleave="hoveredId = null"
         >
           <div class="card-preview">
             <div class="preview-icon">
-              <el-icon :size="48" color="#409EFF" v-if="asset.type === '矢量'"><Location /></el-icon>
-              <el-icon :size="48" color="#67C23A" v-else-if="asset.type === '栅格'"><Picture /></el-icon>
+              <el-icon :size="48" color="#409EFF" v-if="card.dataTypeId === 'vector' || card.type === '矢量'"><Location /></el-icon>
+              <el-icon :size="48" color="#67C23A" v-else-if="card.dataTypeId === 'remote-sensing' || card.type === '栅格'"><Picture /></el-icon>
               <el-icon :size="48" color="#E6A23C" v-else><Document /></el-icon>
             </div>
-            <div class="card-overlay" :class="{ 'visible': hoveredId === asset.id }">
-              <el-button type="primary" round @click="handleView(asset)">
-                去查看 <el-icon class="el-icon--right"><Right /></el-icon>
+            <div class="card-overlay" :class="{ 'visible': hoveredId === card.key }">
+              <el-button type="primary" round @click="handleLocate(card)">
+                定位到地图 <el-icon class="el-icon--right"><Right /></el-icon>
               </el-button>
             </div>
           </div>
           
           <div class="card-info">
-            <h3 class="asset-name" :title="asset.name">{{ asset.name }}</h3>
+            <h3 class="asset-name" :title="card.name">{{ card.name }}</h3>
             <div class="asset-meta">
-              <span class="tag type-tag">{{ asset.type }}</span>
-              <span class="date">{{ formatDate(asset.uploadTime) }}</span>
+              <span class="tag type-tag">{{ card.dataTypeLabel || card.type }}</span>
+              <span class="tag source-tag">{{ card.sourceLabel }}</span>
             </div>
-            <p class="asset-desc">{{ asset.description || '暂无描述信息' }}</p>
+            <div class="region-row">
+              <el-tag v-if="card.regionLabel" size="small" effect="plain">{{ card.regionLabel }}</el-tag>
+              <el-tag v-if="card.statusLabel" size="small" type="success" effect="plain">{{ card.statusLabel }}</el-tag>
+              <span v-if="card.uploadTime" class="date">{{ formatDate(card.uploadTime) }}</span>
+            </div>
+            <p class="asset-desc">{{ card.description || '暂无描述信息' }}</p>
+            <div class="card-actions">
+              <el-button size="small" type="success" plain @click="handleLocate(card)">定位</el-button>
+              <el-button size="small" plain @click="handleView(card)">查看</el-button>
+            </div>
           </div>
         </div>
       </div>
@@ -67,30 +92,169 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { computed, reactive, ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { ArrowLeft, Search, Location, Picture, Document, Right } from '@element-plus/icons-vue';
 import { geoDataApi, type GeoDataItem } from '@/api/geodata';
 import { ElMessage } from 'element-plus';
+import {
+  catalogDataTypes,
+  catalogItems,
+  catalogRegions,
+  catalogSources,
+  getCatalogItemRegion,
+  matchesCatalogFilter,
+  type CatalogDataTypeId,
+  type CatalogRegionId,
+  type CatalogSourceId,
+} from '@/config/geodataCatalog';
 
 const router = useRouter();
 const assets = ref<GeoDataItem[]>([]);
 const loading = ref(true);
 const searchQuery = ref('');
-const hoveredId = ref<number | null>(null);
+const hoveredId = ref<string | null>(null);
 
-const filteredAssets = computed(() => {
-  if (!searchQuery.value) return assets.value;
-  const q = searchQuery.value.toLowerCase();
-  return assets.value.filter(a => 
-    a.name.toLowerCase().includes(q) || 
-    (a.description && a.description.toLowerCase().includes(q))
-  );
+type FilterValue<T extends string> = '' | T;
+
+const filters = reactive<{
+  regionId: FilterValue<CatalogRegionId>;
+  dataTypeId: FilterValue<CatalogDataTypeId>;
+  sourceId: FilterValue<CatalogSourceId>;
+}>({
+  regionId: '',
+  dataTypeId: '',
+  sourceId: '',
 });
+
+const regionOptions = computed(() => [
+  { label: '全部', value: '' },
+  ...catalogRegions.map((region) => ({ label: region.shortName, value: region.id })),
+]);
+
+const typeOptions = computed(() => [
+  { label: '全部', value: '' },
+  ...catalogDataTypes.map((type) => ({ label: type.label, value: type.id })),
+]);
+
+const sourceOptions = computed(() => [
+  { label: '全部', value: '' },
+  ...catalogSources.map((source) => ({ label: source.label, value: source.id })),
+]);
+
+interface DisplayCard {
+  key: string;
+  id?: number;
+  catalogId?: string;
+  name: string;
+  description?: string;
+  type?: string;
+  dataTypeId?: CatalogDataTypeId;
+  dataTypeLabel?: string;
+  sourceId?: CatalogSourceId;
+  sourceLabel?: string;
+  regionId?: CatalogRegionId;
+  regionLabel?: string;
+  statusLabel?: string;
+  uploadTime?: string;
+  center_x?: number;
+  center_y?: number;
+  extent?: [number, number, number, number];
+  srid?: number;
+}
+
+
 
 const formatDate = (dateStr: string) => {
   if (!dateStr) return '';
   return dateStr.split('T')[0];
+};
+
+const getTypeLabel = (id?: string) => catalogDataTypes.find((type) => type.id === id)?.label || '专题数据';
+const getSourceLabel = (id?: string) => catalogSources.find((source) => source.id === id)?.label || '平台数据';
+
+const catalogCards = computed<DisplayCard[]>(() =>
+  catalogItems.map((item) => {
+    const region = getCatalogItemRegion(item);
+    return {
+      key: `catalog:${item.id}`,
+      catalogId: item.id,
+      name: item.title,
+      description: item.description,
+      dataTypeId: item.dataTypeId,
+      dataTypeLabel: getTypeLabel(item.dataTypeId),
+      sourceId: item.sourceId,
+      sourceLabel: getSourceLabel(item.sourceId),
+      regionId: item.regionId,
+      regionLabel: region?.name,
+      statusLabel: item.statusLabel,
+      center_x: region?.center[0],
+      center_y: region?.center[1],
+      extent: region?.bbox,
+      srid: 4326,
+    };
+  })
+);
+
+const inferAssetDataType = (asset: GeoDataItem): CatalogDataTypeId => {
+  if (asset.asset_family === 'raster' || asset.type === '栅格') return 'remote-sensing';
+  if (asset.asset_family === 'vector' || asset.type === '矢量') return 'vector';
+  if (asset.dataset_id) return 'thematic';
+  return 'geology-point';
+};
+
+const assetCards = computed<DisplayCard[]>(() =>
+  assets.value.map((asset) => {
+    const dataTypeId = inferAssetDataType(asset);
+    return {
+      key: `asset:${asset.id}`,
+      id: asset.id,
+      name: asset.name,
+      description: asset.description,
+      type: asset.type,
+      dataTypeId,
+      dataTypeLabel: getTypeLabel(dataTypeId),
+      sourceId: 'platform',
+      sourceLabel: getSourceLabel('platform'),
+      uploadTime: asset.uploadTime,
+      center_x: asset.center_x,
+      center_y: asset.center_y,
+      extent: asset.extent,
+      srid: asset.srid,
+    };
+  })
+);
+
+const displayCards = computed(() => {
+  const keyword = searchQuery.value;
+  const filterPayload = {
+    regionId: filters.regionId || undefined,
+    dataTypeId: filters.dataTypeId || undefined,
+    sourceId: filters.sourceId || undefined,
+    keyword,
+  };
+
+  const matchedCatalogCards = catalogCards.value.filter((card) => {
+    const item = catalogItems.find((entry) => entry.id === card.catalogId);
+    return item ? matchesCatalogFilter(item, filterPayload) : false;
+  });
+
+  const matchedAssetCards = assetCards.value.filter((card) => {
+    if (filters.regionId) return false;
+    if (filters.dataTypeId && card.dataTypeId !== filters.dataTypeId) return false;
+    if (filters.sourceId && card.sourceId !== filters.sourceId) return false;
+    if (!keyword.trim()) return true;
+    return `${card.name} ${card.description || ''}`.toLowerCase().includes(keyword.trim().toLowerCase());
+  });
+
+  return [...matchedCatalogCards, ...matchedAssetCards];
+});
+
+const resetFilters = () => {
+  filters.regionId = '';
+  filters.dataTypeId = '';
+  filters.sourceId = '';
+  searchQuery.value = '';
 };
 
 const loadAssets = async (query = '') => {
@@ -115,21 +279,48 @@ const loadAssets = async (query = '') => {
 };
 
 const handleSearch = () => {
-  loadAssets(searchQuery.value);
+  if (!filters.regionId && !filters.dataTypeId && !filters.sourceId) {
+    loadAssets(searchQuery.value);
+  }
 };
 
 onMounted(() => {
   loadAssets();
 });
 
-const handleView = (asset: GeoDataItem) => {
-  // Pass extent via query or params to center map
+const buildCardQuery = (card: DisplayCard) => {
+  const query: Record<string, string> = {
+    name: card.name,
+  };
+  if (card.id) query.id = String(card.id);
+  if (card.catalogId) {
+    query.catalog = card.catalogId;
+    query.layer = card.catalogId;
+  }
+  if (card.regionId) query.region = card.regionId;
+  if (typeof card.center_x === 'number' && typeof card.center_y === 'number') {
+    query.center = `${card.center_x},${card.center_y}`;
+    query.lat = String(card.center_y);
+    query.lon = String(card.center_x);
+  }
+  if (!card.regionId) query.zoom = '14';
+  return query;
+};
+
+const handleView = (card: DisplayCard) => {
+  router.push({
+    name: 'Map',
+    query: buildCardQuery(card),
+  });
+};
+
+const handleLocate = (card: DisplayCard) => {
   router.push({
     name: 'Map',
     query: {
-      id: asset.id,
-      center: asset.center_x && asset.center_y ? `${asset.center_x},${asset.center_y}` : undefined
-    }
+      ...buildCardQuery(card),
+      action: 'locate',
+    },
   });
 };
 </script>
@@ -160,6 +351,33 @@ const handleView = (asset: GeoDataItem) => {
   align-items: center;
   padding: 0 30px;
   z-index: 10;
+}
+
+.filter-strip {
+  margin: 18px 30px 0;
+  padding: 14px 18px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  border-radius: 18px;
+}
+
+.filter-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #425466;
+}
+
+.reset-filter {
+  margin-left: auto;
+  color: #52616f;
 }
 
 .header-left {
@@ -283,6 +501,26 @@ const handleView = (asset: GeoDataItem) => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 12px;
+  gap: 8px;
+}
+
+.region-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  margin-bottom: 8px;
+}
+
+.source-tag {
+  background: rgba(45, 90, 39, 0.1);
+  color: #2d5a27;
+}
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
 }
 
 .tag {

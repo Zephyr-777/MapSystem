@@ -28,6 +28,6 @@ if not exist ".env" (
 
 REM 启动服务
 echo 启动服务...
-uvicorn main:app --reload --port 9988
+uvicorn app.main:app --host 0.0.0.0 --reload --port 9988
 
 pause

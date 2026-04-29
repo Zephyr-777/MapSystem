@@ -18,9 +18,7 @@ const router = createRouter({
     },
     {
       path: '/',
-      name: 'GeologyHall',
-      component: () => import('@/views/GeologyHallView.vue'),
-      meta: { requiresAuth: true }
+      redirect: '/map'
     },
     {
       path: '/map',
@@ -43,7 +41,7 @@ router.beforeEach((to, _from, next) => {
   if (to.meta.requiresAuth && !authStore.isAuthenticated) {
     next('/login')
   } else if (to.path === '/login' && authStore.isAuthenticated) {
-    next('/')
+    next('/map')
   } else {
     next()
   }

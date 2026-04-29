@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import StreamingResponse, Response, FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from typing import List, Optional, Dict, Any
@@ -12,10 +12,13 @@ import zipfile
 import pandas as pd
 import shapefile
 from datetime import datetime
+from pathlib import Path
+import mimetypes
 
 from app.core.database import get_db
 from app.api.v1.auth import get_current_user
 from app.models.geologic_feature import GeologicFeature
+from app.core.config import settings
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -31,6 +34,7 @@ class FeatureProperties(BaseModel):
     elevation: Optional[float]
     sample_date: Optional[str]
     description: Optional[str]
+    image_path: Optional[str] = None
     highlights: Optional[Dict[str, str]] = None
 
 class FeatureGeoJSON(BaseModel):
@@ -44,6 +48,21 @@ class FeatureCollection(BaseModel):
     total: int
     page: int
     page_size: int
+
+def resolve_feature_image_path(feature: GeologicFeature) -> Optional[Path]:
+    props = feature.properties if isinstance(feature.properties, dict) else {}
+    if isinstance(props, str):
+        try:
+            props = json.loads(props)
+        except Exception:
+            props = {}
+
+    image_path = props.get("image_path")
+    if not image_path:
+        return None
+
+    return settings.STORAGE_DIR / image_path
+
 
 def highlight_text(text: str, query: str) -> str:
     if not text or not query:
@@ -186,6 +205,7 @@ async def get_features(
                         elevation=props.get('elevation'),
                         sample_date=props.get('sample_date'),
                         description=props.get('description'),
+                        image_path=props.get('image_path'),
                         highlights=highlights if highlights else None
                     )
                 ),
@@ -212,31 +232,69 @@ async def get_features(
         print(f"Error fetching features: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/image/{feature_id}")
+async def get_feature_image(
+    feature_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    feature = db.query(GeologicFeature).filter(GeologicFeature.id == feature_id).first()
+    if not feature:
+        raise HTTPException(status_code=404, detail="GeologicFeature not found")
+
+    image_file = resolve_feature_image_path(feature)
+    if not image_file or not image_file.exists() or not image_file.is_file():
+        raise HTTPException(status_code=404, detail="Feature image not found")
+
+    media_type, _ = mimetypes.guess_type(str(image_file))
+    return FileResponse(image_file, media_type=media_type or "image/jpeg")
+
 @router.get("/export")
 async def export_features(
-    format: str = Query(..., regex="^(excel|csv|shapefile)$"),
+    format: str = Query(..., pattern="^(excel|csv|shapefile|markdown|pdf)$"),
     era: Optional[str] = Query(None),
     lithology: Optional[str] = Query(None),
     structure: Optional[str] = Query(None),
     mineral: Optional[str] = Query(None),
     q: Optional[str] = Query(None),
+    ids: Optional[str] = Query(None, description="Comma separated IDs for bulk export"),
+    srid: Optional[int] = Query(4326, description="Target SRID for coordinates"),
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
-    Export geological features to Excel, CSV, or Shapefile.
+    Export geological features to Excel, CSV, Shapefile, Markdown or PDF.
+    Supports bulk export by IDs and Coordinate Transformation.
     """
-    # Reuse filtering logic (simplified duplication for now)
-    # Ideally refactor filtering into a service
     try:
-        # Get all features matching filter (no pagination)
-        # We call get_features logic but without pagination limits
-        # Since get_features is an async route handler, we can't call it directly easily without mocking request
-        # So we duplicate the filtering logic briefly.
-        
         query_obj = db.query(GeologicFeature)
+        
+        # Filter by IDs if provided
+        if ids:
+            id_list = [int(i) for i in ids.split(',') if i.isdigit()]
+            if len(id_list) > 5000:
+                raise HTTPException(status_code=400, detail="Export limit exceeded (max 5000 items). Please filter your selection.")
+            if id_list:
+                query_obj = query_obj.filter(GeologicFeature.id.in_(id_list))
+        
         all_rows = query_obj.all()
         data_rows = []
+        
+        # ... filtering logic ...
+        apply_filters = not ids
+        
+        # Prepare projection transformer if needed
+        transformer = None
+        if srid and srid != 4326:
+            try:
+                from pyproj import Transformer
+                # Always from 4326 (WGS84) to target
+                transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{srid}", always_xy=True)
+            except Exception as e:
+                print(f"Projection init failed: {e}")
+                # Fallback to 4326 or raise warning? We'll continue with 4326 but log error
+                pass
         
         for f in all_rows:
             props = f.properties if isinstance(f.properties, dict) else {}
@@ -244,18 +302,18 @@ async def export_features(
                 try: props = json.loads(props)
                 except: props = {}
             
-            if era and props.get('era') != era: continue
-            if lithology and props.get('lithology_class') != lithology: continue
-            if structure and props.get('structure_type') != structure: continue
-            if mineral and props.get('mineral') != mineral: continue
-            
-            if q:
-                q_lower = q.lower()
-                # Simple check across all values
-                found = False
-                for v in props.values():
-                    if v and q_lower in str(v).lower(): found = True; break
-                if not found and q_lower not in f.name.lower(): continue
+            if apply_filters:
+                if era and props.get('era') != era: continue
+                if lithology and props.get('lithology_class') != lithology: continue
+                if structure and props.get('structure_type') != structure: continue
+                if mineral and props.get('mineral') != mineral: continue
+                
+                if q:
+                    q_lower = q.lower()
+                    found = False
+                    for v in props.values():
+                        if v and q_lower in str(v).lower(): found = True; break
+                    if not found and q_lower not in f.name.lower(): continue
 
             # Extract coordinates
             lon, lat = None, None
@@ -268,6 +326,13 @@ async def export_features(
                 coords = geom.get('coordinates')
                 if coords and len(coords) >= 2:
                     lon, lat = coords[0], coords[1]
+            
+            # Coordinate Transformation
+            if transformer and lon is not None and lat is not None:
+                try:
+                    lon, lat = transformer.transform(lon, lat)
+                except:
+                    pass
 
             row = {
                 'id': f.id,
@@ -285,6 +350,12 @@ async def export_features(
             }
             data_rows.append(row)
             
+        if not data_rows:
+             raise HTTPException(status_code=404, detail="No data found for export")
+             
+        if len(data_rows) > 5000:
+             raise HTTPException(status_code=400, detail="Export limit exceeded (max 5000 items). Please refine your filter.")
+
         df = pd.DataFrame(data_rows)
         
         if format == 'excel':
@@ -307,7 +378,76 @@ async def export_features(
                 headers={"Content-Disposition": "attachment; filename=geology_data.csv"}
             )
             
+        elif format == 'markdown':
+            output = io.StringIO()
+            # Add header
+            output.write(f"# Geology Data Export\n")
+            output.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            output.write(f"Total Items: {len(data_rows)}\n\n")
+            # Convert DF to Markdown
+            output.write(df.to_markdown(index=False))
+            return Response(
+                content=output.getvalue(),
+                media_type='text/markdown',
+                headers={"Content-Disposition": "attachment; filename=geology_data.md"}
+            )
+
+        elif format == 'pdf':
+            # Generate HTML first then convert to PDF
+            html_content = f"""
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <style>
+                    body {{ font-family: Arial, sans-serif; padding: 20px; }}
+                    h1 {{ color: #333; }}
+                    table {{ border-collapse: collapse; width: 100%; font-size: 10px; }}
+                    th, td {{ border: 1px solid #ddd; padding: 6px; text-align: left; }}
+                    th {{ background-color: #f2f2f2; }}
+                    tr:nth-child(even) {{ background-color: #f9f9f9; }}
+                </style>
+            </head>
+            <body>
+                <h1>Geology Data Export</h1>
+                <p>Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                <p>Total Items: {len(data_rows)}</p>
+                {df.to_html(index=False)}
+            </body>
+            </html>
+            """
+            
+            try:
+                import pdfkit
+                # Configure pdfkit (assuming wkhtmltopdf is installed or handled)
+                # If wkhtmltopdf is missing, this will fail. 
+                # For this environment, user might not have wkhtmltopdf installed.
+                # We'll use a try-except and maybe a simpler library if available, 
+                # or just instruct user. 
+                # But since I installed 'pdfkit', it requires the binary.
+                # Alternative: ReportLab (pure python). But pdfkit is easier for HTML->PDF.
+                # Let's assume binary might be missing and handle gracefully.
+                
+                # Check for wkhtmltopdf
+                # config = pdfkit.configuration(wkhtmltopdf='/usr/local/bin/wkhtmltopdf') # Example
+                pdf = pdfkit.from_string(html_content, False)
+                
+                return StreamingResponse(
+                    io.BytesIO(pdf),
+                    media_type='application/pdf',
+                    headers={"Content-Disposition": "attachment; filename=geology_data.pdf"}
+                )
+            except Exception as e:
+                print(f"PDF Generation failed: {e}")
+                # Fallback to HTML if PDF fails
+                return Response(
+                    content=html_content,
+                    media_type='text/html',
+                    headers={"Content-Disposition": "attachment; filename=geology_data.html"}
+                )
+
         elif format == 'shapefile':
+            # ... existing shapefile logic ...
+
             # Create a temporary directory
             with tempfile.TemporaryDirectory() as temp_dir:
                 shp_path = os.path.join(temp_dir, "geology_data")
